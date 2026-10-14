@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Tattoo Hub — 3D Tattoo Preview</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #0d0d0f; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #eee; }
+
+  #app { position: relative; width: 100vw; height: 100vh; }
+  #canvas-wrap { position: absolute; inset: 0; }
+
+  /* Top bar */
+  #topbar {
+    position: absolute; top: 0; left: 0; right: 0; height: 56px;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 20px; z-index: 10;
+    background: linear-gradient(180deg, rgba(0,0,0,0.75), rgba(0,0,0,0));
+    pointer-events: none;
+  }
+  #topbar > * { pointer-events: auto; }
+  #logo {
+    font-weight: 800; letter-spacing: 2px; font-size: 18px;
+    background: linear-gradient(90deg,#ff4d6d,#ff9a3c);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #topbar .actions { display: flex; gap: 8px; }
+
+  /* Side panel */
+  #panel {
+    position: absolute; top: 72px; left: 16px; width: 260px;
+    background: rgba(20,20,24,0.85); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 14px; padding: 16px; z-index: 10;
+    max-height: calc(100vh - 100px); overflow-y: auto;
+  }
+  #panel h3 {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px;
+    color: #888; margin-bottom: 8px; font-weight: 600;
+  }
+  .group { margin-bottom: 18px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+  button.btn {
+    background: #1e1e24; color: #eee; border: 1px solid rgba(255,255,255,0.1);
+    padding: 8px 10px; border-radius: 8px; font-size: 12px; cursor: pointer;
+    transition: all 0.15s; font-weight: 500;
+  }
+  button.btn:hover { background: #2a2a32; border-color: rgba(255,255,255,0.2); }
+  button.btn.active {
+    background: linear-gradient(135deg,#ff4d6d,#ff9a3c); color: #000; border-color: transparent;
+  }
+  input[type="range"] { width: 100%; accent-color: #ff4d6d; }
+  input[type="color"] {
+    width: 100%; height: 34px; border: none; border-radius: 8px; background: #1e1e24; cursor: pointer;
+  }
+  label.small { font-size: 11px; color: #aaa; display: block; margin-bottom: 4px; }
+
+  /* Upload area */
+  #drop {
+    border: 2px dashed rgba(255,255,255,0.15); border-radius: 10px;
+    padding: 18px 10px; text-align: center; font-size: 12px; color: #888;
+    cursor: pointer; transition: all 0.2s;
+  }
+  #drop:hover, #drop.drag { border-color: #ff4d6d; color: #ff4d6d; background: rgba(255,77,109,0.05); }
+  #fileInput { display: none; }
+
+  /* Sliders inline value */
+  .slider-row { display: flex; align-items: center; gap: 8px; }
+  .slider-row span { font-size: 11px; color: #aaa; min-width: 34px; text-align: right; }
+
+  /* Bottom hint */
+  #hint {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    font-size: 11px; color: #666; background: rgba(0,0,0,0.5);
+    padding: 6px 14px; border-radius: 20px; z-index: 10; white-space: nowrap;
+  }
+
+  /* Toast */
+  #toast {
+    position: absolute; top: 70px; left: 50%; transform: translateX(-50%) translateY(-20px);
+    background: rgba(255,77,109,0.95); color: #fff; padding: 10px 18px;
+    border-radius: 8px; font-size: 13px; z-index: 20; opacity: 0;
+    transition: all 0.3s; pointer-events: none;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+  #panel::-webkit-scrollbar { width: 6px; }
+  #panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="canvas-wrap"></div>
+
+  <div id="topbar">
+    <div id="logo">TATTOO HUB</div>
+    <div class="actions">
+      <button class="btn" id="resetView">Reset View</button>
+      <button class="btn" id="snapshot">Snapshot</button>
+    </div>
+  </div>
+
+  <div id="panel">
+    <div class="group">
+      <h3>Body Part</h3>
+      <div class="row" id="bodyParts">
+        <button class="btn active" data-part="arm">Arm</button>
+        <button class="btn" data-part="forearm">Forearm</button>
+        <button class="btn" data-part="calf">Calf</button>
+        <button class="btn" data-part="torso">Torso</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Skin Tone</h3>
+      <input type="color" id="skinColor" value="#e8b48c" />
+      <div style="margin-top:8px;">
+        <label class="small">Lighting</label>
+        <div class="slider-row">
+          <input type="range" id="lightIntensity" min="0.3" max="2" step="0.05" value="1.1" />
+          <span id="lightVal">1.1</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="group">
+      <h3>Tattoo Design</h3>
+      <div id="drop">
+        Drop PNG here<br/>or click to upload
+        <input type="file" id="fileInput" accept="image/png,image/jpeg" />
+      </div>
+    </div>
+
+    <div class="group" id="tattooControls" style="display:none;">
+      <h3>Adjust Tattoo</h3>
+      <label class="small">Scale</label>
+      <div class="slider-row">
+        <input type="range" id="tScale" min="0.2" max="3" step="0.05" value="1" />
+        <span id="tScaleVal">1.0</span>
+      </div>
+      <label class="small" style="margin-top:8px;">Rotation</label>
+      <div class="slider-row">
+        <input type="range" id="tRot" min="-180" max="180" step="1" value="0" />
+        <span id="tRotVal">0°</span>
+      </div>
+      <label class="small" style="margin-top:8px;">Opacity (ink strength)</label>
+      <div class="slider-row">
+        <input type="range" id="tOpacity" min="0.2" max="1" step="0.02" value="0.95" />
+        <span id="tOpacityVal">0.95</span>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn" id="flipH">Flip H</button>
+        <button class="btn" id="removeTattoo">Remove</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="hint">Drag to rotate • Scroll to zoom • Right-drag to pan</div>
+  <div id="toast"></div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
+
+/* ---------- Setup ---------- */
+const wrap = document.getElementById('canvas-wrap');
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0d0d0f);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+camera.position.set(0, 0.3, 3.2);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setSize(innerWidth, innerHeight);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+wrap.appendChild(renderer.domElement);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 1.2;
+controls.maxDistance = 8;
+controls.target.set(0, 0, 0);
+
+/* ---------- Lighting ---------- */
+const hemi = new THREE.HemisphereLight(0xffffff, 0x221a15, 0.55);
+scene.add(hemi);
+
+const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+keyLight.position.set(2.5, 3.5, 3);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(1024, 1024);
+keyLight.shadow.camera.near = 0.5;
+keyLight.shadow.camera.far = 20;
+scene.add(keyLight);
+
+const fillLight = new THREE.DirectionalLight(0xffd9b3, 0.7);
+fillLight.position.set(-3, 1, -1.5);
+scene.add(fillLight);
+
+const rimLight = new THREE.DirectionalLight(0x88aaff, 0.6);
+rimLight.position.set(-1, 2, -3);
+scene.add(rimLight);
+
+/* ---------- Skin material (with subtle SSS feel) ---------- */
+function makeSkinMaterial() {
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#e8b48c'),
+    roughness: 0.62,
+    metalness: 0.0,
+    clearcoat: 0.15,
+    clearcoatRoughness: 0.7,
+    sheen: 0.3,
+    sheenColor: new THREE.Color('#ffd0b0'),
+    sheenRoughness: 0.6,
+    transmission: 0.0,
+    thickness: 0.5,
+    ior: 1.4,
+  });
+}
+const skinMaterial = makeSkinMaterial();
+
+/* ---------- Body part geometries ---------- */
+let bodyMesh = null;
+let tattooDecals = [];
+
+function disposeMesh(m) {
+  if (!m) return;
+  scene.remove(m);
+  m.geometry.dispose();
+}
+function clearTattoos() {
+  tattooDecals.forEach(d => { scene.remove(d); d.geometry.dispose(); d.material.dispose(); });
+  tattooDecals = [];
+}
+
+function buildBodyPart(part) {
+  disposeMesh(bodyMesh);
+  clearTattoos();
+
+  let geo;
+  switch (part) {
+    case 'arm':
+      geo = new THREE.CapsuleGeometry(0.42, 1.6, 32, 64);
+      break;
+    case 'forearm':
+      // tapered cylinder
+      geo = new THREE.CylinderGeometry(0.34, 0.5, 1.8, 64, 32, false);
+      // bulge the top (elbow-ish)
+      break;
+    case 'calf':
+      geo = new THREE.CylinderGeometry(0.28, 0.55, 1.9, 64, 32, false);
+      break;
+    case 'torso':
+      geo = new THREE.CylinderGeometry(0.75, 0.65, 2.0, 64, 40, false);
+      // widen chest
+      {
+        const pos = geo.attributes.position;
+        for (let i = 0; i < pos.count; i++) {
+          const y = pos.getY(i);
+          const x = pos.getX(i);
+          const z = pos.getZ(i);
+          // slight chest bulge at y ~ 0.4
+          const bulge = Math.exp(-Math.pow((y - 0.4) * 2, 2)) * 0.15;
+          const r = Math.sqrt(x*x + z*z);
+          if (r > 0.001) {
+            pos.setX(i, x * (1 + bulge));
+            pos.setZ(i, z * (1 + bulge));
+          }
+        }
+        geo.computeVertexNormals();
+      }
+      break;
+  }
+
+  bodyMesh = new THREE.Mesh(geo, skinMaterial);
+  bodyMesh.castShadow = true;
+  bodyMesh.receiveShadow = true;
+  scene.add(bodyMesh);
+
+  controls.target.set(0, 0, 0);
+}
+
+/* ---------- Ground reflection (subtle) ---------- */
+const groundGeo = new THREE.CircleGeometry(6, 64);
+const groundMat = new THREE.MeshStandardMaterial({
+  color: 0x111114, roughness: 0.9, metalness: 0.1
+});
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -1.15;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ---------- Tattoo decal application ---------- */
+let tattooTexture = null;
+let tattooImage = null;
+let currentParams = { scale: 1, rotation: 0, opacity: 0.95, flipH: false };
+
+// We project from camera direction onto the mesh surface
+function applyTattoo() {
+  if (!bodyMesh || !tattooImage) return;
+  clearTattoos();
+
+  // Build an orientation matrix from camera → mesh (project decal from camera toward mesh center)
+  const meshPos = new THREE.Vector3();
+  bodyMesh.getWorldPosition(meshPos);
+
+  // Direction: from camera toward mesh
+  const camDir = new THREE.Vector3().subVectors(meshPos, camera.position).normalize();
+
+  // Build lookAt orientation: decal faces camera
+  const up = new THREE.Vector3(0, 1, 0);
+  const right = new THREE.Vector3().crossVectors(up, camDir).normalize();
+  const newUp = new THREE.Vector3().crossVectors(camDir, right).normalize();
+
+  const orientation = new THREE.Matrix4().makeBasis(right, newUp, camDir.clone().negate());
+
+  // Rotation around view axis
+  const rotZ = new THREE.Matrix4().makeRotationZ(THREE.MathUtils.degToRad(currentParams.rotation));
+  orientation.multiply(rotZ);
+
+  // Flip horizontal
+  if (currentParams.flipH) {
+    const flip = new THREE.Matrix4().makeScale(-1, 1, 1);
+    orientation.multiply(flip);
+  }
+
+  // Position: place slightly in front of mesh toward camera
+  const position = meshPos.clone().add(camDir.clone().multiplyScalar(-0.55));
+
+  // Size
+  const size = new THREE.Vector3(
+    0.9 * currentParams.scale,
+    0.9 * currentParams.scale,
+    0.9 * currentParams.scale
+  );
+
+  let decalGeo;
+  try {
+    decalGeo = new DecalGeometry(bodyMesh, position, orientation, size);
+  } catch (e) {
+    console.warn('Decal failed', e);
+    return;
+  }
+
+  // Prepare texture
+  const tex = new THREE.Texture(tattooImage);
+  tex.needsUpdate = true;
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = THREE.ClampToEdgeWrapping;
+  tex.wrapT = THREE.ClampToEdgeWrapping;
+
+  const decalMat = new THREE.MeshStandardMaterial({
+    map: tex,
+    transparent: true,
+    opacity: currentParams.opacity,
+    depthTest: true,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -4,
+    roughness: 0.75,
+    metalness: 0.0,
+  });
+
+  const decal = new THREE.Mesh(decalGeo, decalMat);
+  decal.renderOrder = 2;
+  scene.add(decal);
+  tattooDecals.push(decal);
+}
+
+/* ---------- UI wiring ---------- */
+const $ = (id) => document.getElementById(id);
+
+// Body part buttons
+document.querySelectorAll('#bodyParts .btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('#bodyParts .btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    buildBodyPart(btn.dataset.part);
+    if (tattooImage) setTimeout(applyTattoo, 50);
+  });
+});
+
+// Skin color
+$('skinColor').addEventListener('input', (e) => {
+  skinMaterial.color.set(e.target.value);
+});
+
+// Light intensity
+$('lightIntensity').addEventListener('input', (e) => {
+  const v = parseFloat(e.target.value);
+  $('lightVal').textContent = v.toFixed(2);
+  keyLight.intensity = 2.2 * v;
+  hemi.intensity = 0.55 * v;
+});
+
+// File upload
+const drop = $('drop');
+const fileInput = $('fileInput');
+drop.addEventListener('click', () => fileInput.click());
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+drop.addEventListener('drop', (e) => {
+  e.preventDefault();
+  drop.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file) {
+  if (!file.type.startsWith('image/')) {
+    toast('Please upload an image file');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = (ev) => {
+    const img = new Image();
+    img.onload = () => {
+      tattooImage = img;
+      $('tattooControls').style.display = 'block';
+      applyTattoo();
+      toast('Tattoo loaded — adjust on the left');
+    };
+    img.src = ev.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+// Tattoo controls
+$('tScale').addEventListener('input', (e) => {
+  currentParams.scale = parseFloat(e.target.value);
+  $('tScaleVal').textContent = currentParams.scale.toFixed(2);
+  applyTattoo();
+});
+$('tRot').addEventListener('input', (e) => {
+  currentParams.rotation = parseFloat(e.target.value);
+  $('tRotVal').textContent = currentParams.rotation + '°';
+  applyTattoo();
+});
+$('tOpacity').addEventListener('input', (e) => {
+  currentParams.opacity = parseFloat(e.target.value);
+  $('tOpacityVal').textContent = currentParams.opacity.toFixed(2);
+  tattooDecals.forEach(d => d.material.opacity = currentParams.opacity);
+});
+$('flipH').addEventListener('click', () => {
+  currentParams.flipH = !currentParams.flipH;
+  applyTattoo();
+});
+$('removeTattoo').addEventListener('click', () => {
+  clearTattoos();
+  tattooImage = null;
+  $('tattooControls').style.display = 'none';
+  fileInput.value = '';
+  toast('Tattoo removed');
+});
+
+// Reset view
+$('resetView').addEventListener('click', () => {
+  camera.position.set(0, 0.3, 3.2);
+  controls.target.set(0, 0, 0);
+  controls.update();
+});
+
+// Snapshot
+$('snapshot').addEventListener('click', () => {
+  renderer.render(scene, camera);
+  const url = renderer.domElement.toDataURL('image/png');
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'tattoo-hub-' + Date.now() + '.png';
+  a.click();
+  toast('Snapshot saved');
+});
+
+// Toast
+let toastTimer;
+function toast(msg) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
+}
+
+/* ---------- Resize ---------- */
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ---------- Re-apply tattoo when camera moves (keeps decal facing view) ---------- */
+// We only re-apply on orbit end to avoid spamming
+controls.addEventListener('end', () => {
+  if (tattooImage) applyTattoo();
+});
+
+/* ---------- Initial build ---------- */
+buildBodyPart('arm');
+
+/* ---------- Loop ---------- */
+function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
