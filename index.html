@@ -11,7 +11,6 @@
   #app { position: relative; width: 100vw; height: 100vh; }
   #canvas-wrap { position: absolute; inset: 0; }
 
-  /* ---------- Password Gate ---------- */
   #gate {
     position: fixed; inset: 0; z-index: 100;
     display: flex; align-items: center; justify-content: center;
@@ -42,20 +41,12 @@
     width: 100%; margin-top: 14px; padding: 13px; border-radius: 10px;
     background: linear-gradient(135deg,#ff4d6d,#ff9a3c);
     color: #000; font-weight: 700; font-size: 14px; letter-spacing: 1px;
-    border: none; cursor: pointer; transition: transform 0.1s;
+    border: none; cursor: pointer;
   }
-  #gateBtn:active { transform: scale(0.98); }
-  #gateErr {
-    font-size: 12px; color: #ff4d6d; margin-top: 12px; height: 16px;
-  }
-  @keyframes shake {
-    0%,100% { transform: translateX(0); }
-    25% { transform: translateX(-8px); }
-    75% { transform: translateX(8px); }
-  }
+  #gateErr { font-size: 12px; color: #ff4d6d; margin-top: 12px; height: 16px; }
+  @keyframes shake { 0%,100%{transform:translateX(0);} 25%{transform:translateX(-8px);} 75%{transform:translateX(8px);} }
   #gateBox.shake { animation: shake 0.35s; }
 
-  /* Top bar */
   #topbar {
     position: absolute; top: 0; left: 0; right: 0; height: 56px;
     display: flex; align-items: center; justify-content: space-between;
@@ -71,7 +62,6 @@
   }
   #topbar .actions { display: flex; gap: 8px; }
 
-  /* Side panel */
   #panel {
     position: absolute; top: 72px; left: 16px; width: 260px;
     background: rgba(20,20,24,0.85); backdrop-filter: blur(12px);
@@ -127,11 +117,17 @@
 
   #panel::-webkit-scrollbar { width: 6px; }
   #panel::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 3px; }
+
+  #loading {
+    position: absolute; inset: 0; z-index: 5; display: flex;
+    align-items: center; justify-content: center; pointer-events: none;
+    font-size: 12px; color: #666; letter-spacing: 2px;
+  }
+  #loading.hidden { display: none; }
 </style>
 </head>
 <body>
 
-<!-- Password Gate -->
 <div id="gate">
   <div id="gateBox">
     <div id="gateLogo">TATTOO HUB</div>
@@ -144,6 +140,7 @@
 
 <div id="app" style="visibility:hidden;">
   <div id="canvas-wrap"></div>
+  <div id="loading">BUILDING ANATOMY…</div>
 
   <div id="topbar">
     <div id="logo">TATTOO HUB</div>
@@ -157,10 +154,11 @@
     <div class="group">
       <h3>Body Part</h3>
       <div class="row" id="bodyParts">
-        <button class="btn active" data-part="upperArm">Upper Arm</button>
-        <button class="btn" data-part="forearm">Forearm</button>
+        <button class="btn active" data-part="fullArm">Full Arm</button>
+        <button class="btn" data-part="upperArm">Upper Arm</button>
+        <button class="btn" data-part="forearmHand">Forearm + Hand</button>
+        <button class="btn" data-part="fullLeg">Full Leg</button>
         <button class="btn" data-part="calf">Calf</button>
-        <button class="btn" data-part="thigh">Thigh</button>
         <button class="btn" data-part="torso">Torso</button>
       </div>
     </div>
@@ -173,6 +171,13 @@
         <div class="slider-row">
           <input type="range" id="lightIntensity" min="0.3" max="2" step="0.05" value="1.1" />
           <span id="lightVal">1.1</span>
+        </div>
+      </div>
+      <div style="margin-top:8px;">
+        <label class="small">Skin Detail</label>
+        <div class="slider-row">
+          <input type="range" id="skinDetail" min="0" max="1" step="0.05" value="0.8" />
+          <span id="skinDetailVal">0.8</span>
         </div>
       </div>
     </div>
@@ -240,7 +245,9 @@ const gateErr = document.getElementById('gateErr');
 function tryUnlock() {
   if (gateInput.value === PASSWORD) {
     sessionStorage.setItem('tattooHubUnlocked', '1');
-    unlock();
+    gate.classList.add('hidden');
+    document.getElementById('app').style.visibility = 'visible';
+    initScene();
   } else {
     gateErr.textContent = 'Incorrect code';
     gateBox.classList.add('shake');
@@ -251,27 +258,23 @@ function tryUnlock() {
 gateBtn.addEventListener('click', tryUnlock);
 gateInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
 
-function unlock() {
-  gate.classList.add('hidden');
-  document.getElementById('app').style.visibility = 'visible';
-  if (!sceneReady) initScene();
-}
-let sceneReady = false;
-
-// Auto-unlock within session
 if (sessionStorage.getItem('tattooHubUnlocked') === '1') {
   gate.classList.add('hidden');
   document.getElementById('app').style.visibility = 'visible';
 }
 
 /* ============================================================
-   SCENE INIT (only after unlock)
+   SCENE
    ============================================================ */
-let scene, camera, renderer, controls, skinMaterial, bodyMesh, ground;
+let scene, camera, renderer, controls;
+let skinMaterial, bodyGroup, ground;
 let keyLight, hemi, fillLight, rimLight;
 let tattooDecals = [];
 let tattooImage = null;
+let sceneReady = false;
+let skinTextures = {};
 let currentParams = { scale: 1, rotation: 0, opacity: 0.95, flipH: false };
+let currentPart = 'fullArm';
 
 function initScene() {
   if (sceneReady) return;
@@ -281,8 +284,8 @@ function initScene() {
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x0d0d0f);
 
-  camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
-  camera.position.set(0, 0.3, 3.4);
+  camera = new THREE.PerspectiveCamera(40, innerWidth / innerHeight, 0.1, 100);
+  camera.position.set(0.6, 0.4, 3.4);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setSize(innerWidth, innerHeight);
@@ -296,52 +299,63 @@ function initScene() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.minDistance = 1.2;
-  controls.maxDistance = 8;
+  controls.minDistance = 1.0;
+  controls.maxDistance = 10;
   controls.target.set(0, 0, 0);
 
-  hemi = new THREE.HemisphereLight(0xffffff, 0x221a15, 0.55);
+  hemi = new THREE.HemisphereLight(0xffffff, 0x241a15, 0.5);
   scene.add(hemi);
 
-  keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+  keyLight = new THREE.DirectionalLight(0xffffff, 2.0);
   keyLight.position.set(2.5, 3.5, 3);
   keyLight.castShadow = true;
-  keyLight.shadow.mapSize.set(1024, 1024);
+  keyLight.shadow.mapSize.set(2048, 2048);
   keyLight.shadow.camera.near = 0.5;
-  keyLight.shadow.camera.far = 20;
+  keyLight.shadow.camera.far = 25;
+  keyLight.shadow.bias = -0.0005;
   scene.add(keyLight);
 
-  fillLight = new THREE.DirectionalLight(0xffd9b3, 0.7);
+  fillLight = new THREE.DirectionalLight(0xffd9b3, 0.65);
   fillLight.position.set(-3, 1, -1.5);
   scene.add(fillLight);
 
-  rimLight = new THREE.DirectionalLight(0x88aaff, 0.6);
+  rimLight = new THREE.DirectionalLight(0x88aaff, 0.55);
   rimLight.position.set(-1, 2, -3);
   scene.add(rimLight);
 
+  // Procedural skin textures (color, roughness, normal)
+  skinTextures = buildSkinTextures();
+
   skinMaterial = new THREE.MeshPhysicalMaterial({
     color: new THREE.Color('#e8b48c'),
-    roughness: 0.62,
+    roughness: 0.55,
     metalness: 0.0,
-    clearcoat: 0.15,
+    clearcoat: 0.2,
     clearcoatRoughness: 0.7,
-    sheen: 0.3,
+    sheen: 0.35,
     sheenColor: new THREE.Color('#ffd0b0'),
     sheenRoughness: 0.6,
     ior: 1.4,
+    roughnessMap: skinTextures.roughness,
+    normalMap: skinTextures.normal,
+    normalScale: new THREE.Vector2(0.35, 0.35),
+    map: skinTextures.color,
   });
 
-  // Ground
-  const groundGeo = new THREE.CircleGeometry(6, 64);
-  const groundMat = new THREE.MeshStandardMaterial({ color: 0x111114, roughness: 0.9, metalness: 0.1 });
+  const groundGeo = new THREE.CircleGeometry(8, 64);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x0f0f12, roughness: 0.9, metalness: 0.1 });
   ground = new THREE.Mesh(groundGeo, groundMat);
   ground.rotation.x = -Math.PI / 2;
-  ground.position.y = -1.35;
+  ground.position.y = -1.6;
   ground.receiveShadow = true;
   scene.add(ground);
 
-  buildBodyPart('upperArm');
+  bodyGroup = new THREE.Group();
+  scene.add(bodyGroup);
+
+  buildBodyPart(currentPart);
   wireUI();
+  document.getElementById('loading').classList.add('hidden');
 
   addEventListener('resize', () => {
     camera.aspect = innerWidth / innerHeight;
@@ -358,79 +372,135 @@ function initScene() {
   })();
 }
 
+if (sessionStorage.getItem('tattooHubUnlocked') === '1') setTimeout(initScene, 0);
+
 /* ============================================================
-   BODY PART GENERATION — improved anatomy
+   PROCEDURAL SKIN TEXTURES
+   ============================================================ */
+function buildSkinTextures() {
+  const size = 512;
+  const colorCanvas = document.createElement('canvas');
+  colorCanvas.width = colorCanvas.height = size;
+  const cctx = colorCanvas.getContext('2d');
+  cctx.fillStyle = '#ffffff';
+  cctx.fillRect(0, 0, size, size);
+
+  // Fine noise for pores / mottling
+  const img = cctx.getImageData(0, 0, size, size);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() * 0.5 + 0.5) * 255;
+    d[i] = d[i + 1] = d[i + 2] = n;
+  }
+  cctx.putImageData(img, 0, 0);
+
+  // Blur slightly for soft mottling
+  cctx.filter = 'blur(1.2px)';
+  cctx.drawImage(colorCanvas, 0, 0);
+  cctx.filter = 'none';
+
+  // Add subtle veins / redness patches
+  cctx.globalAlpha = 0.08;
+  for (let i = 0; i < 25; i++) {
+    cctx.beginPath();
+    cctx.fillStyle = `hsl(${10 + Math.random() * 20}, 60%, ${60 + Math.random() * 20}%)`;
+    cctx.ellipse(Math.random() * size, Math.random() * size, 20 + Math.random() * 60, 10 + Math.random() * 30, Math.random() * Math.PI, 0, Math.PI * 2);
+    cctx.fill();
+  }
+  cctx.globalAlpha = 1;
+
+  const colorTex = new THREE.CanvasTexture(colorCanvas);
+  colorTex.colorSpace = THREE.SRGBColorSpace;
+  colorTex.wrapS = colorTex.wrapT = THREE.RepeatWrapping;
+
+  // Roughness map — different noise
+  const roughCanvas = document.createElement('canvas');
+  roughCanvas.width = roughCanvas.height = size;
+  const rctx = roughCanvas.getContext('2d');
+  const rimg = rctx.createImageData(size, size);
+  for (let i = 0; i < rimg.data.length; i += 4) {
+    const n = 130 + Math.random() * 60;
+    rimg.data[i] = rimg.data[i + 1] = rimg.data[i + 2] = n;
+    rimg.data[i + 3] = 255;
+  }
+  rctx.putImageData(rimg, 0, 0);
+  const roughTex = new THREE.CanvasTexture(roughCanvas);
+  roughTex.wrapS = roughTex.wrapT = THREE.RepeatWrapping;
+
+  // Normal map — from bumpy noise
+  const normCanvas = document.createElement('canvas');
+  normCanvas.width = normCanvas.height = size;
+  const nctx = normCanvas.getContext('2d');
+  const nimg = nctx.createImageData(size, size);
+  for (let i = 0; i < nimg.data.length; i += 4) {
+    nimg.data[i] = 128 + (Math.random() - 0.5) * 30;
+    nimg.data[i + 1] = 128 + (Math.random() - 0.5) * 30;
+    nimg.data[i + 2] = 255;
+    nimg.data[i + 3] = 255;
+  }
+  nctx.putImageData(nimg, 0, 0);
+  const normTex = new THREE.CanvasTexture(normCanvas);
+  normTex.wrapS = normTex.wrapT = THREE.RepeatWrapping;
+
+  return { color: colorTex, roughness: roughTex, normal: normTex };
+}
+
+/* ============================================================
+   ANATOMY BUILDERS
    ============================================================ */
 
-function disposeMesh(m) {
-  if (!m) return;
-  scene.remove(m);
-  m.geometry.dispose();
+function disposeGroup(g) {
+  if (!g) return;
+  while (g.children.length) {
+    const c = g.children.pop();
+    c.geometry?.dispose();
+  }
 }
 function clearTattoos() {
-  tattooDecals.forEach(d => { scene.remove(d); d.geometry.dispose(); d.material.dispose(); });
+  tattooDecals.forEach(d => { bodyGroup.remove(d); d.geometry.dispose(); d.material.dispose(); });
   tattooDecals = [];
 }
 
 /**
- * Build a lathe-like limb from a set of (y, radius) control points.
- * Uses Catmull-Rom interpolation for smooth anatomy curves.
- * Also allows per-ring x/z squash to make elliptical cross-sections
- * (real limbs aren't perfect circles — forearms are flatter, etc.)
+ * Build a limb as a lathe-like mesh from a profile of control points.
+ * profile: [{ y, r, sx=1, sz=1 }] from bottom to top.
  */
-function buildLimb({ profile, segments = 80, radialSegments = 64, squash = null, bend = 0 }) {
-  // profile: array of { y, r, sx=1, sz=1 }
-  const points = profile.map(p => new THREE.Vector2(p.r, p.y));
-  const curve = new THREE.CatmullRomCurve3(
-    profile.map(p => new THREE.Vector3(p.r, p.y, 0))
-  );
+function buildLimb({ profile, segments = 120, radialSegments = 96, centerY = 0 }) {
+  const positions = [];
+  const uvs = [];
+  const indices = [];
 
-  // Sample the profile smoothly
+  // Sample smoothly
   const samples = [];
-  const N = segments;
-  for (let i = 0; i <= N; i++) {
-    const t = i / N;
-    // find segment
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
     const f = t * (profile.length - 1);
     const i0 = Math.floor(f);
     const i1 = Math.min(i0 + 1, profile.length - 1);
     const lt = f - i0;
-    const p0 = profile[i0];
-    const p1 = profile[i1];
-    const y = p0.y + (p1.y - p0.y) * lt;
-    const r = p0.r + (p1.r - p0.r) * lt;
+    const p0 = profile[i0], p1 = profile[i1];
+    // Catmull-Rom-ish smoothing
+    const sm = lt * lt * (3 - 2 * lt);
+    const y  = p0.y  + (p1.y  - p0.y ) * lt;
+    const r  = p0.r  + (p1.r  - p0.r ) * sm;
     const sx = (p0.sx ?? 1) + ((p1.sx ?? 1) - (p0.sx ?? 1)) * lt;
     const sz = (p0.sz ?? 1) + ((p1.sz ?? 1) - (p0.sz ?? 1)) * lt;
-    samples.push({ y, r, sx, sz });
+    samples.push({ y: y - centerY, r, sx, sz });
   }
 
-  const positions = [];
-  const normals = [];
-  const uvs = [];
-  const indices = [];
-
-  for (let i = 0; i <= N; i++) {
+  for (let i = 0; i <= segments; i++) {
     const s = samples[i];
-    const v = i / N;
+    const v = i / segments;
     for (let j = 0; j <= radialSegments; j++) {
       const u = j / radialSegments;
       const theta = u * Math.PI * 2;
-      // optional bend along the limb axis
-      const bendX = bend * Math.sin(v * Math.PI) * 0.15;
-      const x = Math.cos(theta) * s.r * s.sx + bendX;
+      const x = Math.cos(theta) * s.r * s.sx;
       const z = Math.sin(theta) * s.r * s.sz;
       positions.push(x, s.y, z);
-      uvs.push(u, v);
+      uvs.push(u * 2, v * 3);
     }
   }
-  // Normals — approximate as radial from axis
-  for (let i = 0; i <= N; i++) {
-    for (let j = 0; j <= radialSegments; j++) {
-      const theta = (j / radialSegments) * Math.PI * 2;
-      normals.push(Math.cos(theta), 0, Math.sin(theta));
-    }
-  }
-  for (let i = 0; i < N; i++) {
+  for (let i = 0; i < segments; i++) {
     for (let j = 0; j < radialSegments; j++) {
       const a = i * (radialSegments + 1) + j;
       const b = a + radialSegments + 1;
@@ -441,145 +511,368 @@ function buildLimb({ profile, segments = 80, radialSegments = 64, squash = null,
 
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
   geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geo.setIndex(indices);
   geo.computeVertexNormals();
   return geo;
 }
 
+/**
+ * Hand — palm + 5 fingers, angled naturally.
+ * Placed so it attaches to a wrist at y=0, extends downward.
+ */
+function buildHand({ flip = false } = {}) {
+  const group = new THREE.Group();
+
+  // Palm: an ellipsoid-ish box made from a scaled sphere
+  const palmGeo = new THREE.SphereGeometry(1, 32, 24);
+  const palmMesh = new THREE.Mesh(palmGeo, skinMaterial);
+  palmMesh.scale.set(0.16, 0.10, 0.055);
+  palmMesh.position.y = -0.09;
+  palmMesh.castShadow = true;
+  palmMesh.receiveShadow = true;
+  group.add(palmMesh);
+
+  // Wrist connector
+  const wristGeo = new THREE.CylinderGeometry(0.075, 0.09, 0.08, 24, 8, false);
+  const wristMesh = new THREE.Mesh(wristGeo, skinMaterial);
+  wristMesh.position.y = 0.02;
+  wristMesh.scale.z = 0.7;
+  wristMesh.castShadow = true;
+  group.add(wristMesh);
+
+  // Fingers — 4 fingers + thumb
+  const fingerData = [
+    { x: -0.10, len: 0.16, r: 0.026, spread: -0.05 }, // index
+    { x: -0.035, len: 0.18, r: 0.027, spread: -0.015 }, // middle
+    { x: 0.035, len: 0.165, r: 0.026, spread: 0.02 }, // ring
+    { x: 0.10, len: 0.13, r: 0.023, spread: 0.06 }, // pinky
+  ];
+  fingerData.forEach(f => {
+    const fingerGroup = new THREE.Group();
+    // 3 segments per finger
+    let cy = 0;
+    const segLens = [f.len * 0.42, f.len * 0.33, f.len * 0.25];
+    const radii = [f.r, f.r * 0.9, f.r * 0.8, f.r * 0.7];
+    segLens.forEach((sl, si) => {
+      const g = new THREE.CylinderGeometry(radii[si + 1], radii[si], sl, 16, 4, false);
+      const m = new THREE.Mesh(g, skinMaterial);
+      m.position.y = cy - sl / 2;
+      m.castShadow = true;
+      fingerGroup.add(m);
+      // knuckle
+      if (si < 2) {
+        const knuckleGeo = new THREE.SphereGeometry(radii[si + 1], 16, 12);
+        const km = new THREE.Mesh(knuckleGeo, skinMaterial);
+        km.position.y = cy - sl;
+        km.castShadow = true;
+        fingerGroup.add(km);
+      }
+      cy -= sl;
+    });
+    // nail tip
+    const tipGeo = new THREE.SphereGeometry(radii[3], 12, 8);
+    const tip = new THREE.Mesh(tipGeo, skinMaterial);
+    tip.position.y = cy;
+    fingerGroup.add(tip);
+
+    fingerGroup.position.set(f.x, -0.16, 0);
+    fingerGroup.rotation.z = f.spread;
+    fingerGroup.rotation.x = 0.1;
+    group.add(fingerGroup);
+  });
+
+  // Thumb
+  const thumbGroup = new THREE.Group();
+  {
+    const segLens = [0.06, 0.05, 0.05];
+    const radii = [0.032, 0.028, 0.024, 0.02];
+    let cy = 0;
+    segLens.forEach((sl, si) => {
+      const g = new THREE.CylinderGeometry(radii[si + 1], radii[si], sl, 16, 4, false);
+      const m = new THREE.Mesh(g, skinMaterial);
+      m.position.y = cy - sl / 2;
+      m.castShadow = true;
+      thumbGroup.add(m);
+      cy -= sl;
+    });
+    thumbGroup.position.set(-0.16, -0.14, 0.02);
+    thumbGroup.rotation.z = 0.6;
+    thumbGroup.rotation.x = 0.3;
+  }
+  group.add(thumbGroup);
+
+  if (flip) group.rotation.y = Math.PI;
+
+  return group;
+}
+
+/**
+ * Foot — shaped like a real foot, with toes.
+ * Attaches to ankle at y=0.
+ */
+function buildFoot({ flip = false } = {}) {
+  const group = new THREE.Group();
+
+  // Ankle
+  const ankleGeo = new THREE.CylinderGeometry(0.075, 0.09, 0.12, 24, 8, false);
+  const ankle = new THREE.Mesh(ankleGeo, skinMaterial);
+  ankle.position.y = -0.02;
+  ankle.castShadow = true;
+  group.add(ankle);
+
+  // Main foot body — elongated ellipsoid tapering forward
+  const footGeo = new THREE.SphereGeometry(1, 40, 28);
+  const foot = new THREE.Mesh(footGeo, skinMaterial);
+  foot.scale.set(0.13, 0.055, 0.22);
+  foot.position.set(0, -0.14, 0.06);
+  foot.castShadow = true;
+  group.add(foot);
+
+  // Heel bump
+  const heelGeo = new THREE.SphereGeometry(1, 24, 16);
+  const heel = new THREE.Mesh(heelGeo, skinMaterial);
+  heel.scale.set(0.09, 0.07, 0.09);
+  heel.position.set(0, -0.15, -0.08);
+  heel.castShadow = true;
+  group.add(heel);
+
+  // Toes — 5 small rounded shapes
+  const toeData = [
+    { x: -0.10, len: 0.045, r: 0.028, z: 0.24 },
+    { x: -0.05, len: 0.040, r: 0.025, z: 0.26 },
+    { x: 0.0,   len: 0.036, r: 0.023, z: 0.27 },
+    { x: 0.05,  len: 0.032, r: 0.021, z: 0.26 },
+    { x: 0.095, len: 0.028, r: 0.019, z: 0.245 },
+  ];
+  toeData.forEach(t => {
+    const tGeo = new THREE.SphereGeometry(t.r, 16, 12);
+    const tm = new THREE.Mesh(tGeo, skinMaterial);
+    tm.scale.z = t.len / t.r;
+    tm.position.set(t.x, -0.14, t.z);
+    tm.castShadow = true;
+    group.add(tm);
+  });
+
+  if (flip) group.rotation.y = Math.PI;
+
+  return group;
+}
+
+/* ============================================================
+   BODY PART ASSEMBLY
+   ============================================================ */
 function buildBodyPart(part) {
-  disposeMesh(bodyMesh);
+  currentPart = part;
   clearTattoos();
-  let geo;
+  disposeGroup(bodyGroup);
+  bodyGroup.clear();
+
+  let limbMesh = null;
+  const extras = [];
 
   switch (part) {
-    case 'upperArm': {
-      // Bicep bulge, tapering to elbow. Height ~1.8, centered at 0.
-      geo = buildLimb({
+    case 'fullArm': {
+      // Shoulder → upper arm (bicep) → elbow → forearm → wrist → hand
+      const geo = buildLimb({
         profile: [
-          { y: -0.95, r: 0.20, sx: 1.0, sz: 0.95 }, // elbow end
-          { y: -0.60, r: 0.28, sx: 1.0, sz: 0.95 },
-          { y: -0.20, r: 0.36, sx: 1.0, sz: 1.0 }, // bicep peak
-          { y:  0.20, r: 0.38, sx: 1.0, sz: 1.0 }, // bicep
-          { y:  0.55, r: 0.36, sx: 1.05, sz: 1.0 }, // deltoid base
-          { y:  0.80, r: 0.38, sx: 1.1, sz: 1.0 }, // shoulder cap
-          { y:  0.95, r: 0.34, sx: 1.15, sz: 1.0 },
+          { y: -2.35, r: 0.085, sx: 1.05, sz: 0.75 }, // wrist (flat)
+          { y: -2.20, r: 0.105, sx: 1.05, sz: 0.82 },
+          { y: -1.90, r: 0.145, sx: 1.0, sz: 0.88 },
+          { y: -1.55, r: 0.185, sx: 1.0, sz: 0.92 }, // forearm muscle
+          { y: -1.20, r: 0.205, sx: 1.0, sz: 0.95 },
+          { y: -0.95, r: 0.185, sx: 1.0, sz: 0.95 }, // elbow narrow
+          { y: -0.85, r: 0.195, sx: 1.0, sz: 0.98 }, // elbow
+          { y: -0.50, r: 0.235, sx: 1.0, sz: 1.0 },  // lower bicep
+          { y: -0.10, r: 0.285, sx: 1.0, sz: 1.02 }, // bicep peak
+          { y:  0.25, r: 0.280, sx: 1.05, sz: 1.0 }, // upper bicep
+          { y:  0.55, r: 0.290, sx: 1.15, sz: 0.98 },// deltoid
+          { y:  0.75, r: 0.310, sx: 1.25, sz: 0.95 },// shoulder cap
+          { y:  0.85, r: 0.280, sx: 1.3, sz: 0.9 },  // shoulder top
         ],
-        segments: 100,
-        radialSegments: 72,
-        bend: 0.15,
+        segments: 160,
+        radialSegments: 96,
+        centerY: -0.6,
       });
+      limbMesh = new THREE.Mesh(geo, skinMaterial);
+      // Attach hand at wrist
+      const hand = buildHand();
+      hand.position.y = -1.75; // wrist position after centerY shift
+      hand.scale.setScalar(1.1);
+      extras.push(hand);
       break;
     }
 
-    case 'forearm': {
-      // Wider near elbow, tapers to wrist. Slight flatness (sz<1) near wrist.
-      geo = buildLimb({
+    case 'upperArm': {
+      const geo = buildLimb({
         profile: [
-          { y: -0.95, r: 0.14, sx: 1.05, sz: 0.85 }, // wrist
-          { y: -0.65, r: 0.19, sx: 1.05, sz: 0.92 },
-          { y: -0.25, r: 0.27, sx: 1.0, sz: 0.97 },  // forearm muscle
-          { y:  0.15, r: 0.30, sx: 1.0, sz: 1.0 },
-          { y:  0.55, r: 0.28, sx: 1.0, sz: 1.0 },   // near elbow
-          { y:  0.85, r: 0.24, sx: 1.0, sz: 1.0 },
-          { y:  0.98, r: 0.19, sx: 1.0, sz: 1.0 },   // elbow
+          { y: -0.95, r: 0.19, sx: 1.0, sz: 0.95 },
+          { y: -0.60, r: 0.22, sx: 1.0, sz: 0.98 },
+          { y: -0.15, r: 0.285, sx: 1.0, sz: 1.0 },
+          { y:  0.25, r: 0.300, sx: 1.05, sz: 1.0 },
+          { y:  0.55, r: 0.290, sx: 1.15, sz: 0.98 },
+          { y:  0.75, r: 0.310, sx: 1.25, sz: 0.95 },
+          { y:  0.90, r: 0.285, sx: 1.3, sz: 0.9 },
         ],
-        segments: 100,
-        radialSegments: 72,
-        bend: 0.05,
+        segments: 120,
+        radialSegments: 80,
       });
+      limbMesh = new THREE.Mesh(geo, skinMaterial);
+      break;
+    }
+
+    case 'forearmHand': {
+      const geo = buildLimb({
+        profile: [
+          { y: -1.55, r: 0.085, sx: 1.05, sz: 0.78 },
+          { y: -1.35, r: 0.105, sx: 1.05, sz: 0.82 },
+          { y: -1.05, r: 0.145, sx: 1.0, sz: 0.88 },
+          { y: -0.70, r: 0.185, sx: 1.0, sz: 0.92 },
+          { y: -0.35, r: 0.210, sx: 1.0, sz: 0.95 },
+          { y:  0.10, r: 0.195, sx: 1.0, sz: 0.98 },
+          { y:  0.55, r: 0.175, sx: 1.0, sz: 1.0 },
+          { y:  0.90, r: 0.150, sx: 1.0, sz: 1.0 },
+        ],
+        segments: 120,
+        radialSegments: 80,
+        centerY: -0.3,
+      });
+      limbMesh = new THREE.Mesh(geo, skinMaterial);
+      const hand = buildHand();
+      hand.position.y = -1.30;
+      hand.scale.setScalar(1.05);
+      extras.push(hand);
+      break;
+    }
+
+    case 'fullLeg': {
+      const geo = buildLimb({
+        profile: [
+          { y: -2.55, r: 0.13, sx: 1.1, sz: 0.85 },  // ankle
+          { y: -2.35, r: 0.155, sx: 1.05, sz: 0.88 },
+          { y: -2.00, r: 0.22, sx: 1.0, sz: 0.92 },
+          { y: -1.65, r: 0.31, sx: 1.0, sz: 0.97 },  // calf peak
+          { y: -1.30, r: 0.33, sx: 1.0, sz: 1.0 },
+          { y: -1.00, r: 0.30, sx: 1.0, sz: 1.0 },
+          { y: -0.75, r: 0.26, sx: 1.0, sz: 1.0 },   // knee
+          { y: -0.55, r: 0.30, sx: 1.0, sz: 1.0 },
+          { y: -0.15, r: 0.38, sx: 1.0, sz: 1.0 },
+          { y:  0.25, r: 0.44, sx: 1.0, sz: 1.0 },   // thigh mid
+          { y:  0.65, r: 0.47, sx: 1.0, sz: 1.0 },
+          { y:  1.00, r: 0.48, sx: 1.0, sz: 1.0 },   // upper thigh
+          { y:  1.20, r: 0.45, sx: 1.0, sz: 1.0 },
+        ],
+        segments: 180,
+        radialSegments: 96,
+        centerY: -0.6,
+      });
+      limbMesh = new THREE.Mesh(geo, skinMaterial);
+      const foot = buildFoot();
+      foot.position.y = -1.95;
+      foot.scale.setScalar(1.05);
+      extras.push(foot);
       break;
     }
 
     case 'calf': {
-      // Calf muscle bulge at ~60% height, ankle taper, shin flatness at front.
-      geo = buildLimb({
+      const geo = buildLimb({
         profile: [
-          { y: -1.0, r: 0.14, sx: 1.1, sz: 0.85 }, // ankle
-          { y: -0.7, r: 0.17, sx: 1.05, sz: 0.9 },
-          { y: -0.3, r: 0.26, sx: 1.0, sz: 0.95 },
-          { y:  0.05, r: 0.34, sx: 1.0, sz: 1.0 }, // calf muscle peak
-          { y:  0.4, r: 0.36, sx: 1.0, sz: 1.0 },
-          { y:  0.7, r: 0.32, sx: 1.0, sz: 1.0 },
-          { y:  1.0, r: 0.26, sx: 1.0, sz: 1.0 },  // below knee
+          { y: -1.15, r: 0.13, sx: 1.1, sz: 0.85 },
+          { y: -0.95, r: 0.16, sx: 1.05, sz: 0.9 },
+          { y: -0.60, r: 0.22, sx: 1.0, sz: 0.94 },
+          { y: -0.25, r: 0.30, sx: 1.0, sz: 0.97 },
+          { y:  0.10, r: 0.34, sx: 1.0, sz: 1.0 },
+          { y:  0.45, r: 0.33, sx: 1.0, sz: 1.0 },
+          { y:  0.75, r: 0.28, sx: 1.0, sz: 1.0 },
+          { y:  1.00, r: 0.25, sx: 1.0, sz: 1.0 },
         ],
-        segments: 100,
-        radialSegments: 72,
-        bend: 0.05,
+        segments: 140,
+        radialSegments: 80,
       });
-      break;
-    }
-
-    case 'thigh': {
-      // Big, fleshy. Wider at top.
-      geo = buildLimb({
-        profile: [
-          { y: -1.1, r: 0.24, sx: 1.0, sz: 1.0 },  // knee end
-          { y: -0.8, r: 0.32, sx: 1.0, sz: 1.0 },
-          { y: -0.4, r: 0.40, sx: 1.0, sz: 1.0 },
-          { y:  0.0, r: 0.46, sx: 1.0, sz: 1.0 },
-          { y:  0.45, r: 0.50, sx: 1.0, sz: 1.0 },  // upper thigh
-          { y:  0.85, r: 0.52, sx: 1.0, sz: 1.0 },
-          { y:  1.1, r: 0.48, sx: 1.0, sz: 1.0 },   // hip
-        ],
-        segments: 110,
-        radialSegments: 72,
-        bend: 0.1,
-      });
+      limbMesh = new THREE.Mesh(geo, skinMaterial);
+      const foot = buildFoot();
+      foot.position.y = -1.12;
+      extras.push(foot);
       break;
     }
 
     case 'torso': {
-      // A proper torso: hips → waist pinch → chest → shoulders
-      // Cross-section flattened front-to-back (sz smaller) for realistic chest depth.
-      geo = buildLimb({
+      const geo = buildLimb({
         profile: [
-          { y: -1.15, r: 0.55, sx: 1.0, sz: 0.65 }, // hips/pelvis
+          { y: -1.15, r: 0.55, sx: 1.0, sz: 0.65 },
           { y: -0.85, r: 0.52, sx: 1.0, sz: 0.65 },
-          { y: -0.45, r: 0.47, sx: 1.0, sz: 0.62 }, // waist pinch
-          { y: -0.05, r: 0.52, sx: 1.0, sz: 0.62 }, // lower ribs
-          { y:  0.35, r: 0.60, sx: 1.05, sz: 0.68 },// chest
-          { y:  0.65, r: 0.65, sx: 1.15, sz: 0.7 }, // upper chest
-          { y:  0.9, r: 0.68, sx: 1.25, sz: 0.65 }, // shoulders
-          { y:  1.1, r: 0.60, sx: 1.2, sz: 0.6 },
+          { y: -0.45, r: 0.47, sx: 1.0, sz: 0.62 },
+          { y: -0.05, r: 0.52, sx: 1.0, sz: 0.62 },
+          { y:  0.35, r: 0.60, sx: 1.05, sz: 0.68 },
+          { y:  0.65, r: 0.65, sx: 1.15, sz: 0.70 },
+          { y:  0.90, r: 0.68, sx: 1.25, sz: 0.65 },
+          { y:  1.10, r: 0.60, sx: 1.20, sz: 0.60 },
         ],
-        segments: 120,
-        radialSegments: 80,
-        bend: 0,
+        segments: 140,
+        radialSegments: 96,
       });
+      limbMesh = new THREE.Mesh(geo, skinMaterial);
       break;
     }
   }
 
-  bodyMesh = new THREE.Mesh(geo, skinMaterial);
-  bodyMesh.castShadow = true;
-  bodyMesh.receiveShadow = true;
-  scene.add(bodyMesh);
+  if (limbMesh) {
+    limbMesh.castShadow = true;
+    limbMesh.receiveShadow = true;
+    bodyGroup.add(limbMesh);
+  }
+  extras.forEach(e => {
+    e.traverse(c => { if (c.isMesh) { c.castShadow = true; c.receiveShadow = true; c.material = skinMaterial; } });
+    bodyGroup.add(e);
+  });
 
-  controls.target.set(0, 0, 0);
-
-  // Re-fit camera to part size
-  geo.computeBoundingSphere();
-  const radius = geo.boundingSphere.radius;
-  const dist = radius * 2.6;
-  camera.position.set(0, 0.2, dist);
-  controls.minDistance = radius * 0.8;
-  controls.maxDistance = radius * 5;
+  // Fit camera
+  const box = new THREE.Box3().setFromObject(bodyGroup);
+  const size = box.getSize(new THREE.Vector3());
+  const center = box.getCenter(new THREE.Vector3());
+  const radius = Math.max(size.x, size.y, size.z) * 0.6;
+  controls.target.copy(center);
+  camera.position.set(center.x + radius * 1.4, center.y + radius * 0.3, center.z + radius * 3.0);
+  controls.minDistance = radius * 1.0;
+  controls.maxDistance = radius * 8;
   controls.update();
+
+  // Ground under part
+  ground.position.y = box.min.y - 0.05;
 }
 
 /* ============================================================
    TATTOO DECAL
    ============================================================ */
 function applyTattoo() {
-  if (!bodyMesh || !tattooImage) return;
+  if (!bodyGroup || !tattooImage) return;
   clearTattoos();
 
-  const meshPos = new THREE.Vector3();
-  bodyMesh.getWorldPosition(meshPos);
+  // Raycast from camera toward body center to find nearest hit point
+  const raycaster = new THREE.Raycaster();
+  const center = new THREE.Vector3();
+  new THREE.Box3().setFromObject(bodyGroup).getCenter(center);
+  const dir = new THREE.Vector3().subVectors(center, camera.position).normalize();
+  raycaster.set(camera.position, dir);
 
-  const camDir = new THREE.Vector3().subVectors(meshPos, camera.position).normalize();
+  const meshes = [];
+  bodyGroup.traverse(c => { if (c.isMesh) meshes.push(c); });
+  const hits = raycaster.intersectObjects(meshes, false);
+
+  let hitMesh, hitPoint, hitNormal;
+  if (hits.length) {
+    hitMesh = hits[0].object;
+    hitPoint = hits[0].point.clone();
+    hitNormal = hits[0].face.normal.clone()
+      .applyMatrix3(new THREE.Matrix3().getNormalMatrix(hitMesh.matrixWorld)).normalize();
+  } else {
+    // Fallback: project from camera onto center
+    hitMesh = meshes[0];
+    hitPoint = center.clone();
+    hitNormal = new THREE.Vector3().subVectors(camera.position, center).normalize();
+  }
+
+  const camDir = new THREE.Vector3().subVectors(camera.position, hitPoint).normalize();
   const up = new THREE.Vector3(0, 1, 0);
   const right = new THREE.Vector3().crossVectors(up, camDir).normalize();
   const newUp = new THREE.Vector3().crossVectors(camDir, right).normalize();
@@ -587,34 +880,35 @@ function applyTattoo() {
 
   const rotZ = new THREE.Matrix4().makeRotationZ(THREE.MathUtils.degToRad(currentParams.rotation));
   orientation.multiply(rotZ);
+  if (currentParams.flipH) orientation.multiply(new THREE.Matrix4().makeScale(-1, 1, 1));
 
-  if (currentParams.flipH) {
-    orientation.multiply(new THREE.Matrix4().makeScale(-1, 1, 1));
-  }
+  // Local-space projection: transform hitPoint and orientation into hitMesh local space
+  const inv = new THREE.Matrix4().copy(hitMesh.matrixWorld).invert();
+  const localPos = hitPoint.clone().applyMatrix4(inv);
+  const localOrient = orientation.clone().premultiply(new THREE.Matrix4().extractRotation(inv));
+  const localCamDir = camDir.clone().transformDirection(inv);
 
-  // Distance from mesh toward camera (0.55 of local radius scaled by part size)
-  bodyMesh.geometry.computeBoundingSphere();
-  const radius = bodyMesh.geometry.boundingSphere.radius;
-  const offset = radius * 0.95;
-
-  const position = meshPos.clone().add(camDir.clone().multiplyScalar(-offset));
+  // Push slightly outward along normal for clean projection
+  localPos.add(localCamDir.clone().multiplyScalar(-0.001));
 
   const size = new THREE.Vector3(
-    0.9 * currentParams.scale,
-    0.9 * currentParams.scale,
-    0.9 * currentParams.scale
+    0.55 * currentParams.scale,
+    0.55 * currentParams.scale,
+    0.55 * currentParams.scale
   );
 
   let decalGeo;
   try {
-    decalGeo = new DecalGeometry(bodyMesh, position, orientation, size);
+    decalGeo = new DecalGeometry(hitMesh, localPos, localOrient, size);
   } catch (e) { return; }
+
+  // If decal came back empty, bail
+  if (!decalGeo.attributes.position || decalGeo.attributes.position.count === 0) return;
 
   const tex = new THREE.Texture(tattooImage);
   tex.needsUpdate = true;
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = THREE.ClampToEdgeWrapping;
-  tex.wrapT = THREE.ClampToEdgeWrapping;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
 
   const decalMat = new THREE.MeshStandardMaterial({
     map: tex,
@@ -624,13 +918,13 @@ function applyTattoo() {
     depthWrite: false,
     polygonOffset: true,
     polygonOffsetFactor: -4,
-    roughness: 0.75,
+    roughness: 0.7,
     metalness: 0.0,
   });
 
   const decal = new THREE.Mesh(decalGeo, decalMat);
   decal.renderOrder = 2;
-  scene.add(decal);
+  hitMesh.add(decal); // parent to mesh so it moves with it
   tattooDecals.push(decal);
 }
 
@@ -645,17 +939,36 @@ function wireUI() {
       document.querySelectorAll('#bodyParts .btn').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       buildBodyPart(btn.dataset.part);
-      if (tattooImage) setTimeout(applyTattoo, 50);
+      if (tattooImage) setTimeout(applyTattoo, 80);
     });
   });
 
-  $('skinColor').addEventListener('input', (e) => skinMaterial.color.set(e.target.value));
+  $('skinColor').addEventListener('input', (e) => {
+    skinMaterial.color.set(e.target.value);
+  });
 
   $('lightIntensity').addEventListener('input', (e) => {
     const v = parseFloat(e.target.value);
     $('lightVal').textContent = v.toFixed(2);
-    keyLight.intensity = 2.2 * v;
-    hemi.intensity = 0.55 * v;
+    keyLight.intensity = 2.0 * v;
+    hemi.intensity = 0.5 * v;
+  });
+
+  $('skinDetail').addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    $('skinDetailVal').textContent = v.toFixed(2);
+    if (skinMaterial.normalMap) {
+      skinMaterial.normalScale.set(v * 0.5, v * 0.5);
+    }
+    if (skinMaterial.map) {
+      skinMaterial.map.repeat.set(3 + v * 3, 4 + v * 4);
+      skinMaterial.map.needsUpdate = true;
+    }
+    if (skinMaterial.roughnessMap) {
+      skinMaterial.roughnessMap.repeat.set(3 + v * 3, 4 + v * 4);
+      skinMaterial.roughnessMap.needsUpdate = true;
+    }
+    skinMaterial.needsUpdate = true;
   });
 
   const drop = $('drop');
@@ -699,11 +1012,13 @@ function wireUI() {
   });
 
   $('resetView').addEventListener('click', () => {
-    if (!bodyMesh) return;
-    bodyMesh.geometry.computeBoundingSphere();
-    const radius = bodyMesh.geometry.boundingSphere.radius;
-    camera.position.set(0, 0.2, radius * 2.6);
-    controls.target.set(0, 0, 0);
+    if (!bodyGroup) return;
+    const box = new THREE.Box3().setFromObject(bodyGroup);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    const radius = Math.max(size.x, size.y, size.z) * 0.6;
+    controls.target.copy(center);
+    camera.position.set(center.x + radius * 1.4, center.y + radius * 0.3, center.z + radius * 3.0);
     controls.update();
   });
 
@@ -742,14 +1057,6 @@ function toast(msg) {
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
-}
-
-/* ============================================================
-   Auto-boot if already unlocked
-   ============================================================ */
-if (sessionStorage.getItem('tattooHubUnlocked') === '1') {
-  // Defer to let DOM settle
-  setTimeout(initScene, 0);
 }
 </script>
 </body>
