@@ -11,6 +11,50 @@
   #app { position: relative; width: 100vw; height: 100vh; }
   #canvas-wrap { position: absolute; inset: 0; }
 
+  /* ---------- Password Gate ---------- */
+  #gate {
+    position: fixed; inset: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(circle at 50% 40%, #1a1a20 0%, #0d0d0f 70%);
+  }
+  #gate.hidden { display: none; }
+  #gateBox {
+    width: 340px; padding: 36px 30px; border-radius: 18px;
+    background: rgba(20,20,24,0.9); backdrop-filter: blur(16px);
+    border: 1px solid rgba(255,255,255,0.08);
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 80px rgba(255,77,109,0.08);
+  }
+  #gateLogo {
+    font-weight: 800; letter-spacing: 3px; font-size: 24px; margin-bottom: 6px;
+    background: linear-gradient(90deg,#ff4d6d,#ff9a3c);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  #gateSub { font-size: 12px; color: #777; margin-bottom: 26px; letter-spacing: 1px; }
+  #gateInput {
+    width: 100%; padding: 13px 16px; border-radius: 10px; font-size: 16px;
+    background: #121216; border: 1px solid rgba(255,255,255,0.1);
+    color: #fff; outline: none; text-align: center; letter-spacing: 4px;
+    transition: border-color 0.2s;
+  }
+  #gateInput:focus { border-color: #ff4d6d; }
+  #gateBtn {
+    width: 100%; margin-top: 14px; padding: 13px; border-radius: 10px;
+    background: linear-gradient(135deg,#ff4d6d,#ff9a3c);
+    color: #000; font-weight: 700; font-size: 14px; letter-spacing: 1px;
+    border: none; cursor: pointer; transition: transform 0.1s;
+  }
+  #gateBtn:active { transform: scale(0.98); }
+  #gateErr {
+    font-size: 12px; color: #ff4d6d; margin-top: 12px; height: 16px;
+  }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    25% { transform: translateX(-8px); }
+    75% { transform: translateX(8px); }
+  }
+  #gateBox.shake { animation: shake 0.35s; }
+
   /* Top bar */
   #topbar {
     position: absolute; top: 0; left: 0; right: 0; height: 56px;
@@ -56,7 +100,6 @@
   }
   label.small { font-size: 11px; color: #aaa; display: block; margin-bottom: 4px; }
 
-  /* Upload area */
   #drop {
     border: 2px dashed rgba(255,255,255,0.15); border-radius: 10px;
     padding: 18px 10px; text-align: center; font-size: 12px; color: #888;
@@ -65,18 +108,15 @@
   #drop:hover, #drop.drag { border-color: #ff4d6d; color: #ff4d6d; background: rgba(255,77,109,0.05); }
   #fileInput { display: none; }
 
-  /* Sliders inline value */
   .slider-row { display: flex; align-items: center; gap: 8px; }
   .slider-row span { font-size: 11px; color: #aaa; min-width: 34px; text-align: right; }
 
-  /* Bottom hint */
   #hint {
     position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
     font-size: 11px; color: #666; background: rgba(0,0,0,0.5);
     padding: 6px 14px; border-radius: 20px; z-index: 10; white-space: nowrap;
   }
 
-  /* Toast */
   #toast {
     position: absolute; top: 70px; left: 50%; transform: translateX(-50%) translateY(-20px);
     background: rgba(255,77,109,0.95); color: #fff; padding: 10px 18px;
@@ -90,7 +130,19 @@
 </style>
 </head>
 <body>
-<div id="app">
+
+<!-- Password Gate -->
+<div id="gate">
+  <div id="gateBox">
+    <div id="gateLogo">TATTOO HUB</div>
+    <div id="gateSub">ENTER ACCESS CODE</div>
+    <input id="gateInput" type="password" inputmode="numeric" maxlength="8" autocomplete="off" placeholder="••••" />
+    <button id="gateBtn">UNLOCK</button>
+    <div id="gateErr"></div>
+  </div>
+</div>
+
+<div id="app" style="visibility:hidden;">
   <div id="canvas-wrap"></div>
 
   <div id="topbar">
@@ -105,9 +157,10 @@
     <div class="group">
       <h3>Body Part</h3>
       <div class="row" id="bodyParts">
-        <button class="btn active" data-part="arm">Arm</button>
+        <button class="btn active" data-part="upperArm">Upper Arm</button>
         <button class="btn" data-part="forearm">Forearm</button>
         <button class="btn" data-part="calf">Calf</button>
+        <button class="btn" data-part="thigh">Thigh</button>
         <button class="btn" data-part="torso">Torso</button>
       </div>
     </div>
@@ -174,53 +227,99 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { DecalGeometry } from 'three/addons/geometries/DecalGeometry.js';
 
-/* ---------- Setup ---------- */
-const wrap = document.getElementById('canvas-wrap');
-const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d0d0f);
+/* ============================================================
+   PASSWORD GATE
+   ============================================================ */
+const PASSWORD = '2026';
+const gate = document.getElementById('gate');
+const gateBox = document.getElementById('gateBox');
+const gateInput = document.getElementById('gateInput');
+const gateBtn = document.getElementById('gateBtn');
+const gateErr = document.getElementById('gateErr');
 
-const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
-camera.position.set(0, 0.3, 3.2);
+function tryUnlock() {
+  if (gateInput.value === PASSWORD) {
+    sessionStorage.setItem('tattooHubUnlocked', '1');
+    unlock();
+  } else {
+    gateErr.textContent = 'Incorrect code';
+    gateBox.classList.add('shake');
+    gateInput.value = '';
+    setTimeout(() => gateBox.classList.remove('shake'), 400);
+  }
+}
+gateBtn.addEventListener('click', tryUnlock);
+gateInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') tryUnlock(); });
 
-const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
-renderer.setSize(innerWidth, innerHeight);
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.0;
-wrap.appendChild(renderer.domElement);
+function unlock() {
+  gate.classList.add('hidden');
+  document.getElementById('app').style.visibility = 'visible';
+  if (!sceneReady) initScene();
+}
+let sceneReady = false;
 
-const controls = new OrbitControls(camera, renderer.domElement);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.minDistance = 1.2;
-controls.maxDistance = 8;
-controls.target.set(0, 0, 0);
+// Auto-unlock within session
+if (sessionStorage.getItem('tattooHubUnlocked') === '1') {
+  gate.classList.add('hidden');
+  document.getElementById('app').style.visibility = 'visible';
+}
 
-/* ---------- Lighting ---------- */
-const hemi = new THREE.HemisphereLight(0xffffff, 0x221a15, 0.55);
-scene.add(hemi);
+/* ============================================================
+   SCENE INIT (only after unlock)
+   ============================================================ */
+let scene, camera, renderer, controls, skinMaterial, bodyMesh, ground;
+let keyLight, hemi, fillLight, rimLight;
+let tattooDecals = [];
+let tattooImage = null;
+let currentParams = { scale: 1, rotation: 0, opacity: 0.95, flipH: false };
 
-const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
-keyLight.position.set(2.5, 3.5, 3);
-keyLight.castShadow = true;
-keyLight.shadow.mapSize.set(1024, 1024);
-keyLight.shadow.camera.near = 0.5;
-keyLight.shadow.camera.far = 20;
-scene.add(keyLight);
+function initScene() {
+  if (sceneReady) return;
+  sceneReady = true;
 
-const fillLight = new THREE.DirectionalLight(0xffd9b3, 0.7);
-fillLight.position.set(-3, 1, -1.5);
-scene.add(fillLight);
+  const wrap = document.getElementById('canvas-wrap');
+  scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x0d0d0f);
 
-const rimLight = new THREE.DirectionalLight(0x88aaff, 0.6);
-rimLight.position.set(-1, 2, -3);
-scene.add(rimLight);
+  camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+  camera.position.set(0, 0.3, 3.4);
 
-/* ---------- Skin material (with subtle SSS feel) ---------- */
-function makeSkinMaterial() {
-  return new THREE.MeshPhysicalMaterial({
+  renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+  renderer.setSize(innerWidth, innerHeight);
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.0;
+  wrap.appendChild(renderer.domElement);
+
+  controls = new OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.minDistance = 1.2;
+  controls.maxDistance = 8;
+  controls.target.set(0, 0, 0);
+
+  hemi = new THREE.HemisphereLight(0xffffff, 0x221a15, 0.55);
+  scene.add(hemi);
+
+  keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
+  keyLight.position.set(2.5, 3.5, 3);
+  keyLight.castShadow = true;
+  keyLight.shadow.mapSize.set(1024, 1024);
+  keyLight.shadow.camera.near = 0.5;
+  keyLight.shadow.camera.far = 20;
+  scene.add(keyLight);
+
+  fillLight = new THREE.DirectionalLight(0xffd9b3, 0.7);
+  fillLight.position.set(-3, 1, -1.5);
+  scene.add(fillLight);
+
+  rimLight = new THREE.DirectionalLight(0x88aaff, 0.6);
+  rimLight.position.set(-1, 2, -3);
+  scene.add(rimLight);
+
+  skinMaterial = new THREE.MeshPhysicalMaterial({
     color: new THREE.Color('#e8b48c'),
     roughness: 0.62,
     metalness: 0.0,
@@ -229,16 +328,39 @@ function makeSkinMaterial() {
     sheen: 0.3,
     sheenColor: new THREE.Color('#ffd0b0'),
     sheenRoughness: 0.6,
-    transmission: 0.0,
-    thickness: 0.5,
     ior: 1.4,
   });
-}
-const skinMaterial = makeSkinMaterial();
 
-/* ---------- Body part geometries ---------- */
-let bodyMesh = null;
-let tattooDecals = [];
+  // Ground
+  const groundGeo = new THREE.CircleGeometry(6, 64);
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x111114, roughness: 0.9, metalness: 0.1 });
+  ground = new THREE.Mesh(groundGeo, groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = -1.35;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  buildBodyPart('upperArm');
+  wireUI();
+
+  addEventListener('resize', () => {
+    camera.aspect = innerWidth / innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+  });
+
+  controls.addEventListener('end', () => { if (tattooImage) applyTattoo(); });
+
+  (function animate() {
+    requestAnimationFrame(animate);
+    controls.update();
+    renderer.render(scene, camera);
+  })();
+}
+
+/* ============================================================
+   BODY PART GENERATION — improved anatomy
+   ============================================================ */
 
 function disposeMesh(m) {
   if (!m) return;
@@ -250,43 +372,184 @@ function clearTattoos() {
   tattooDecals = [];
 }
 
+/**
+ * Build a lathe-like limb from a set of (y, radius) control points.
+ * Uses Catmull-Rom interpolation for smooth anatomy curves.
+ * Also allows per-ring x/z squash to make elliptical cross-sections
+ * (real limbs aren't perfect circles — forearms are flatter, etc.)
+ */
+function buildLimb({ profile, segments = 80, radialSegments = 64, squash = null, bend = 0 }) {
+  // profile: array of { y, r, sx=1, sz=1 }
+  const points = profile.map(p => new THREE.Vector2(p.r, p.y));
+  const curve = new THREE.CatmullRomCurve3(
+    profile.map(p => new THREE.Vector3(p.r, p.y, 0))
+  );
+
+  // Sample the profile smoothly
+  const samples = [];
+  const N = segments;
+  for (let i = 0; i <= N; i++) {
+    const t = i / N;
+    // find segment
+    const f = t * (profile.length - 1);
+    const i0 = Math.floor(f);
+    const i1 = Math.min(i0 + 1, profile.length - 1);
+    const lt = f - i0;
+    const p0 = profile[i0];
+    const p1 = profile[i1];
+    const y = p0.y + (p1.y - p0.y) * lt;
+    const r = p0.r + (p1.r - p0.r) * lt;
+    const sx = (p0.sx ?? 1) + ((p1.sx ?? 1) - (p0.sx ?? 1)) * lt;
+    const sz = (p0.sz ?? 1) + ((p1.sz ?? 1) - (p0.sz ?? 1)) * lt;
+    samples.push({ y, r, sx, sz });
+  }
+
+  const positions = [];
+  const normals = [];
+  const uvs = [];
+  const indices = [];
+
+  for (let i = 0; i <= N; i++) {
+    const s = samples[i];
+    const v = i / N;
+    for (let j = 0; j <= radialSegments; j++) {
+      const u = j / radialSegments;
+      const theta = u * Math.PI * 2;
+      // optional bend along the limb axis
+      const bendX = bend * Math.sin(v * Math.PI) * 0.15;
+      const x = Math.cos(theta) * s.r * s.sx + bendX;
+      const z = Math.sin(theta) * s.r * s.sz;
+      positions.push(x, s.y, z);
+      uvs.push(u, v);
+    }
+  }
+  // Normals — approximate as radial from axis
+  for (let i = 0; i <= N; i++) {
+    for (let j = 0; j <= radialSegments; j++) {
+      const theta = (j / radialSegments) * Math.PI * 2;
+      normals.push(Math.cos(theta), 0, Math.sin(theta));
+    }
+  }
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < radialSegments; j++) {
+      const a = i * (radialSegments + 1) + j;
+      const b = a + radialSegments + 1;
+      indices.push(a, b, a + 1);
+      indices.push(b, b + 1, a + 1);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geo.setIndex(indices);
+  geo.computeVertexNormals();
+  return geo;
+}
+
 function buildBodyPart(part) {
   disposeMesh(bodyMesh);
   clearTattoos();
-
   let geo;
+
   switch (part) {
-    case 'arm':
-      geo = new THREE.CapsuleGeometry(0.42, 1.6, 32, 64);
+    case 'upperArm': {
+      // Bicep bulge, tapering to elbow. Height ~1.8, centered at 0.
+      geo = buildLimb({
+        profile: [
+          { y: -0.95, r: 0.20, sx: 1.0, sz: 0.95 }, // elbow end
+          { y: -0.60, r: 0.28, sx: 1.0, sz: 0.95 },
+          { y: -0.20, r: 0.36, sx: 1.0, sz: 1.0 }, // bicep peak
+          { y:  0.20, r: 0.38, sx: 1.0, sz: 1.0 }, // bicep
+          { y:  0.55, r: 0.36, sx: 1.05, sz: 1.0 }, // deltoid base
+          { y:  0.80, r: 0.38, sx: 1.1, sz: 1.0 }, // shoulder cap
+          { y:  0.95, r: 0.34, sx: 1.15, sz: 1.0 },
+        ],
+        segments: 100,
+        radialSegments: 72,
+        bend: 0.15,
+      });
       break;
-    case 'forearm':
-      // tapered cylinder
-      geo = new THREE.CylinderGeometry(0.34, 0.5, 1.8, 64, 32, false);
-      // bulge the top (elbow-ish)
+    }
+
+    case 'forearm': {
+      // Wider near elbow, tapers to wrist. Slight flatness (sz<1) near wrist.
+      geo = buildLimb({
+        profile: [
+          { y: -0.95, r: 0.14, sx: 1.05, sz: 0.85 }, // wrist
+          { y: -0.65, r: 0.19, sx: 1.05, sz: 0.92 },
+          { y: -0.25, r: 0.27, sx: 1.0, sz: 0.97 },  // forearm muscle
+          { y:  0.15, r: 0.30, sx: 1.0, sz: 1.0 },
+          { y:  0.55, r: 0.28, sx: 1.0, sz: 1.0 },   // near elbow
+          { y:  0.85, r: 0.24, sx: 1.0, sz: 1.0 },
+          { y:  0.98, r: 0.19, sx: 1.0, sz: 1.0 },   // elbow
+        ],
+        segments: 100,
+        radialSegments: 72,
+        bend: 0.05,
+      });
       break;
-    case 'calf':
-      geo = new THREE.CylinderGeometry(0.28, 0.55, 1.9, 64, 32, false);
+    }
+
+    case 'calf': {
+      // Calf muscle bulge at ~60% height, ankle taper, shin flatness at front.
+      geo = buildLimb({
+        profile: [
+          { y: -1.0, r: 0.14, sx: 1.1, sz: 0.85 }, // ankle
+          { y: -0.7, r: 0.17, sx: 1.05, sz: 0.9 },
+          { y: -0.3, r: 0.26, sx: 1.0, sz: 0.95 },
+          { y:  0.05, r: 0.34, sx: 1.0, sz: 1.0 }, // calf muscle peak
+          { y:  0.4, r: 0.36, sx: 1.0, sz: 1.0 },
+          { y:  0.7, r: 0.32, sx: 1.0, sz: 1.0 },
+          { y:  1.0, r: 0.26, sx: 1.0, sz: 1.0 },  // below knee
+        ],
+        segments: 100,
+        radialSegments: 72,
+        bend: 0.05,
+      });
       break;
-    case 'torso':
-      geo = new THREE.CylinderGeometry(0.75, 0.65, 2.0, 64, 40, false);
-      // widen chest
-      {
-        const pos = geo.attributes.position;
-        for (let i = 0; i < pos.count; i++) {
-          const y = pos.getY(i);
-          const x = pos.getX(i);
-          const z = pos.getZ(i);
-          // slight chest bulge at y ~ 0.4
-          const bulge = Math.exp(-Math.pow((y - 0.4) * 2, 2)) * 0.15;
-          const r = Math.sqrt(x*x + z*z);
-          if (r > 0.001) {
-            pos.setX(i, x * (1 + bulge));
-            pos.setZ(i, z * (1 + bulge));
-          }
-        }
-        geo.computeVertexNormals();
-      }
+    }
+
+    case 'thigh': {
+      // Big, fleshy. Wider at top.
+      geo = buildLimb({
+        profile: [
+          { y: -1.1, r: 0.24, sx: 1.0, sz: 1.0 },  // knee end
+          { y: -0.8, r: 0.32, sx: 1.0, sz: 1.0 },
+          { y: -0.4, r: 0.40, sx: 1.0, sz: 1.0 },
+          { y:  0.0, r: 0.46, sx: 1.0, sz: 1.0 },
+          { y:  0.45, r: 0.50, sx: 1.0, sz: 1.0 },  // upper thigh
+          { y:  0.85, r: 0.52, sx: 1.0, sz: 1.0 },
+          { y:  1.1, r: 0.48, sx: 1.0, sz: 1.0 },   // hip
+        ],
+        segments: 110,
+        radialSegments: 72,
+        bend: 0.1,
+      });
       break;
+    }
+
+    case 'torso': {
+      // A proper torso: hips → waist pinch → chest → shoulders
+      // Cross-section flattened front-to-back (sz smaller) for realistic chest depth.
+      geo = buildLimb({
+        profile: [
+          { y: -1.15, r: 0.55, sx: 1.0, sz: 0.65 }, // hips/pelvis
+          { y: -0.85, r: 0.52, sx: 1.0, sz: 0.65 },
+          { y: -0.45, r: 0.47, sx: 1.0, sz: 0.62 }, // waist pinch
+          { y: -0.05, r: 0.52, sx: 1.0, sz: 0.62 }, // lower ribs
+          { y:  0.35, r: 0.60, sx: 1.05, sz: 0.68 },// chest
+          { y:  0.65, r: 0.65, sx: 1.15, sz: 0.7 }, // upper chest
+          { y:  0.9, r: 0.68, sx: 1.25, sz: 0.65 }, // shoulders
+          { y:  1.1, r: 0.60, sx: 1.2, sz: 0.6 },
+        ],
+        segments: 120,
+        radialSegments: 80,
+        bend: 0,
+      });
+      break;
+    }
   }
 
   bodyMesh = new THREE.Mesh(geo, skinMaterial);
@@ -295,57 +558,47 @@ function buildBodyPart(part) {
   scene.add(bodyMesh);
 
   controls.target.set(0, 0, 0);
+
+  // Re-fit camera to part size
+  geo.computeBoundingSphere();
+  const radius = geo.boundingSphere.radius;
+  const dist = radius * 2.6;
+  camera.position.set(0, 0.2, dist);
+  controls.minDistance = radius * 0.8;
+  controls.maxDistance = radius * 5;
+  controls.update();
 }
 
-/* ---------- Ground reflection (subtle) ---------- */
-const groundGeo = new THREE.CircleGeometry(6, 64);
-const groundMat = new THREE.MeshStandardMaterial({
-  color: 0x111114, roughness: 0.9, metalness: 0.1
-});
-const ground = new THREE.Mesh(groundGeo, groundMat);
-ground.rotation.x = -Math.PI / 2;
-ground.position.y = -1.15;
-ground.receiveShadow = true;
-scene.add(ground);
-
-/* ---------- Tattoo decal application ---------- */
-let tattooTexture = null;
-let tattooImage = null;
-let currentParams = { scale: 1, rotation: 0, opacity: 0.95, flipH: false };
-
-// We project from camera direction onto the mesh surface
+/* ============================================================
+   TATTOO DECAL
+   ============================================================ */
 function applyTattoo() {
   if (!bodyMesh || !tattooImage) return;
   clearTattoos();
 
-  // Build an orientation matrix from camera → mesh (project decal from camera toward mesh center)
   const meshPos = new THREE.Vector3();
   bodyMesh.getWorldPosition(meshPos);
 
-  // Direction: from camera toward mesh
   const camDir = new THREE.Vector3().subVectors(meshPos, camera.position).normalize();
-
-  // Build lookAt orientation: decal faces camera
   const up = new THREE.Vector3(0, 1, 0);
   const right = new THREE.Vector3().crossVectors(up, camDir).normalize();
   const newUp = new THREE.Vector3().crossVectors(camDir, right).normalize();
-
   const orientation = new THREE.Matrix4().makeBasis(right, newUp, camDir.clone().negate());
 
-  // Rotation around view axis
   const rotZ = new THREE.Matrix4().makeRotationZ(THREE.MathUtils.degToRad(currentParams.rotation));
   orientation.multiply(rotZ);
 
-  // Flip horizontal
   if (currentParams.flipH) {
-    const flip = new THREE.Matrix4().makeScale(-1, 1, 1);
-    orientation.multiply(flip);
+    orientation.multiply(new THREE.Matrix4().makeScale(-1, 1, 1));
   }
 
-  // Position: place slightly in front of mesh toward camera
-  const position = meshPos.clone().add(camDir.clone().multiplyScalar(-0.55));
+  // Distance from mesh toward camera (0.55 of local radius scaled by part size)
+  bodyMesh.geometry.computeBoundingSphere();
+  const radius = bodyMesh.geometry.boundingSphere.radius;
+  const offset = radius * 0.95;
 
-  // Size
+  const position = meshPos.clone().add(camDir.clone().multiplyScalar(-offset));
+
   const size = new THREE.Vector3(
     0.9 * currentParams.scale,
     0.9 * currentParams.scale,
@@ -355,12 +608,8 @@ function applyTattoo() {
   let decalGeo;
   try {
     decalGeo = new DecalGeometry(bodyMesh, position, orientation, size);
-  } catch (e) {
-    console.warn('Decal failed', e);
-    return;
-  }
+  } catch (e) { return; }
 
-  // Prepare texture
   const tex = new THREE.Texture(tattooImage);
   tex.needsUpdate = true;
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -385,58 +634,98 @@ function applyTattoo() {
   tattooDecals.push(decal);
 }
 
-/* ---------- UI wiring ---------- */
-const $ = (id) => document.getElementById(id);
+/* ============================================================
+   UI WIRING
+   ============================================================ */
+function wireUI() {
+  const $ = (id) => document.getElementById(id);
 
-// Body part buttons
-document.querySelectorAll('#bodyParts .btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    document.querySelectorAll('#bodyParts .btn').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    buildBodyPart(btn.dataset.part);
-    if (tattooImage) setTimeout(applyTattoo, 50);
+  document.querySelectorAll('#bodyParts .btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#bodyParts .btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      buildBodyPart(btn.dataset.part);
+      if (tattooImage) setTimeout(applyTattoo, 50);
+    });
   });
-});
 
-// Skin color
-$('skinColor').addEventListener('input', (e) => {
-  skinMaterial.color.set(e.target.value);
-});
+  $('skinColor').addEventListener('input', (e) => skinMaterial.color.set(e.target.value));
 
-// Light intensity
-$('lightIntensity').addEventListener('input', (e) => {
-  const v = parseFloat(e.target.value);
-  $('lightVal').textContent = v.toFixed(2);
-  keyLight.intensity = 2.2 * v;
-  hemi.intensity = 0.55 * v;
-});
+  $('lightIntensity').addEventListener('input', (e) => {
+    const v = parseFloat(e.target.value);
+    $('lightVal').textContent = v.toFixed(2);
+    keyLight.intensity = 2.2 * v;
+    hemi.intensity = 0.55 * v;
+  });
 
-// File upload
-const drop = $('drop');
-const fileInput = $('fileInput');
-drop.addEventListener('click', () => fileInput.click());
-drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
-drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
-drop.addEventListener('drop', (e) => {
-  e.preventDefault();
-  drop.classList.remove('drag');
-  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
-});
-fileInput.addEventListener('change', (e) => {
-  if (e.target.files.length) handleFile(e.target.files[0]);
-});
+  const drop = $('drop');
+  const fileInput = $('fileInput');
+  drop.addEventListener('click', () => fileInput.click());
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('drag'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault(); drop.classList.remove('drag');
+    if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+  });
+  fileInput.addEventListener('change', (e) => {
+    if (e.target.files.length) handleFile(e.target.files[0]);
+  });
+
+  $('tScale').addEventListener('input', (e) => {
+    currentParams.scale = parseFloat(e.target.value);
+    $('tScaleVal').textContent = currentParams.scale.toFixed(2);
+    applyTattoo();
+  });
+  $('tRot').addEventListener('input', (e) => {
+    currentParams.rotation = parseFloat(e.target.value);
+    $('tRotVal').textContent = currentParams.rotation + '°';
+    applyTattoo();
+  });
+  $('tOpacity').addEventListener('input', (e) => {
+    currentParams.opacity = parseFloat(e.target.value);
+    $('tOpacityVal').textContent = currentParams.opacity.toFixed(2);
+    tattooDecals.forEach(d => d.material.opacity = currentParams.opacity);
+  });
+  $('flipH').addEventListener('click', () => {
+    currentParams.flipH = !currentParams.flipH;
+    applyTattoo();
+  });
+  $('removeTattoo').addEventListener('click', () => {
+    clearTattoos();
+    tattooImage = null;
+    $('tattooControls').style.display = 'none';
+    fileInput.value = '';
+    toast('Tattoo removed');
+  });
+
+  $('resetView').addEventListener('click', () => {
+    if (!bodyMesh) return;
+    bodyMesh.geometry.computeBoundingSphere();
+    const radius = bodyMesh.geometry.boundingSphere.radius;
+    camera.position.set(0, 0.2, radius * 2.6);
+    controls.target.set(0, 0, 0);
+    controls.update();
+  });
+
+  $('snapshot').addEventListener('click', () => {
+    renderer.render(scene, camera);
+    const url = renderer.domElement.toDataURL('image/png');
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'tattoo-hub-' + Date.now() + '.png';
+    a.click();
+    toast('Snapshot saved');
+  });
+}
 
 function handleFile(file) {
-  if (!file.type.startsWith('image/')) {
-    toast('Please upload an image file');
-    return;
-  }
+  if (!file.type.startsWith('image/')) { toast('Please upload an image file'); return; }
   const reader = new FileReader();
   reader.onload = (ev) => {
     const img = new Image();
     img.onload = () => {
       tattooImage = img;
-      $('tattooControls').style.display = 'block';
+      document.getElementById('tattooControls').style.display = 'block';
       applyTattoo();
       toast('Tattoo loaded — adjust on the left');
     };
@@ -445,85 +734,23 @@ function handleFile(file) {
   reader.readAsDataURL(file);
 }
 
-// Tattoo controls
-$('tScale').addEventListener('input', (e) => {
-  currentParams.scale = parseFloat(e.target.value);
-  $('tScaleVal').textContent = currentParams.scale.toFixed(2);
-  applyTattoo();
-});
-$('tRot').addEventListener('input', (e) => {
-  currentParams.rotation = parseFloat(e.target.value);
-  $('tRotVal').textContent = currentParams.rotation + '°';
-  applyTattoo();
-});
-$('tOpacity').addEventListener('input', (e) => {
-  currentParams.opacity = parseFloat(e.target.value);
-  $('tOpacityVal').textContent = currentParams.opacity.toFixed(2);
-  tattooDecals.forEach(d => d.material.opacity = currentParams.opacity);
-});
-$('flipH').addEventListener('click', () => {
-  currentParams.flipH = !currentParams.flipH;
-  applyTattoo();
-});
-$('removeTattoo').addEventListener('click', () => {
-  clearTattoos();
-  tattooImage = null;
-  $('tattooControls').style.display = 'none';
-  fileInput.value = '';
-  toast('Tattoo removed');
-});
-
-// Reset view
-$('resetView').addEventListener('click', () => {
-  camera.position.set(0, 0.3, 3.2);
-  controls.target.set(0, 0, 0);
-  controls.update();
-});
-
-// Snapshot
-$('snapshot').addEventListener('click', () => {
-  renderer.render(scene, camera);
-  const url = renderer.domElement.toDataURL('image/png');
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'tattoo-hub-' + Date.now() + '.png';
-  a.click();
-  toast('Snapshot saved');
-});
-
-// Toast
 let toastTimer;
 function toast(msg) {
-  const t = $('toast');
+  const t = document.getElementById('toast');
+  if (!t) return;
   t.textContent = msg;
   t.classList.add('show');
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => t.classList.remove('show'), 2000);
 }
 
-/* ---------- Resize ---------- */
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight;
-  camera.updateProjectionMatrix();
-  renderer.setSize(innerWidth, innerHeight);
-});
-
-/* ---------- Re-apply tattoo when camera moves (keeps decal facing view) ---------- */
-// We only re-apply on orbit end to avoid spamming
-controls.addEventListener('end', () => {
-  if (tattooImage) applyTattoo();
-});
-
-/* ---------- Initial build ---------- */
-buildBodyPart('arm');
-
-/* ---------- Loop ---------- */
-function animate() {
-  requestAnimationFrame(animate);
-  controls.update();
-  renderer.render(scene, camera);
+/* ============================================================
+   Auto-boot if already unlocked
+   ============================================================ */
+if (sessionStorage.getItem('tattooHubUnlocked') === '1') {
+  // Defer to let DOM settle
+  setTimeout(initScene, 0);
 }
-animate();
 </script>
 </body>
 </html>
