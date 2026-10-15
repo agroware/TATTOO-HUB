@@ -158,7 +158,7 @@
         <button class="btn" data-part="upperArm">Upper Arm</button>
         <button class="btn" data-part="forearmHand">Forearm + Hand</button>
         <button class="btn" data-part="fullLeg">Full Leg</button>
-        <button class="btn" data-part="calf">Calf</button>
+        <button class="btn" data-part="calf">Calf + Foot</button>
         <button class="btn" data-part="torso">Torso</button>
       </div>
     </div>
@@ -172,7 +172,14 @@
           <span id="poseElbowVal">20°</span>
         </div>
       </div>
-      <label class="small" style="margin-top:8px;">Finger curl</label>
+      <div id="kneeRow">
+        <label class="small">Knee bend</label>
+        <div class="slider-row">
+          <input type="range" id="poseKnee" min="0" max="120" step="1" value="10" />
+          <span id="poseKneeVal">10°</span>
+        </div>
+      </div>
+      <label class="small" id="curlLabel" style="margin-top:8px;">Finger curl</label>
       <div class="slider-row">
         <input type="range" id="poseCurl" min="0" max="100" step="1" value="15" />
         <span id="poseCurlVal">15%</span>
@@ -291,8 +298,9 @@ let sceneReady = false;
 let skinTextures = {};
 let currentParams = { scale: 1, rotation: 0, opacity: 0.95, flipH: false };
 let currentPart = 'fullArm';
-let pose = { elbow: 20, curl: 15 };
+let pose = { elbow: 20, curl: 15, knee: 10 };
 const ARM_PARTS = ['fullArm', 'upperArm', 'forearmHand'];
+const LEG_PARTS = ['fullLeg', 'calf'];
 
 function initScene() {
   if (sceneReady) return;
@@ -542,22 +550,22 @@ function buildLimb({ profile, segments = 120, radialSegments = 96, centerY = 0 }
    elbow and every finger joint bend smoothly, then baked into plain
    static meshes (so tattoo decals project cleanly).
    ============================================================ */
-const ArmModel = (() => {
+const LimbModel = (() => {
   const T = THREE, R = Math.random, P = x => Math.max(0, x), G = (x, m, s) => Math.exp(-(((x - m) / s) ** 2));
-  let armM, fingM, nailM;
+  let armM, fingM, nailM, legM;
 
   function ensure() {
     if (armM) return;
     const col = skinMaterial.color.clone();
-    const mk = arm => new T.MeshPhysicalMaterial({ map: skinTex(arm), color: col.clone(), roughness: 0.6, clearcoat: 0.08, clearcoatRoughness: 0.5 });
-    armM = mk(true); fingM = mk(false);
+    const mk = (arm, W, H) => new T.MeshPhysicalMaterial({ map: skinTex(arm, W, H), color: col.clone(), roughness: 0.6, clearcoat: 0.08, clearcoatRoughness: 0.5 });
+    armM = mk(true); fingM = mk(false); legM = mk(false, 768, 1400);
     nailM = new T.MeshPhysicalMaterial({ map: nailTex(), roughness: 0.38, clearcoat: 0.4, clearcoatRoughness: 0.3, side: T.DoubleSide });
   }
-  function setColor(c) { if (armM) { armM.color.set(c); fingM.color.set(c); } }
+  function setColor(c) { if (armM) { armM.color.set(c); fingM.color.set(c); legM.color.set(c); } }
 
   // Soft, smooth skin (white base so the tone picker controls the colour)
-  function skinTex(arm) {
-    const W = arm ? 640 : 384, H = arm ? 1568 : 704, c = document.createElement('canvas');
+  function skinTex(arm, W0, H0) {
+    const W = W0 || (arm ? 640 : 384), H = H0 || (arm ? 1568 : 704), c = document.createElement('canvas');
     c.width = W; c.height = H;
     const x = c.getContext('2d');
     x.fillStyle = '#ffffff'; x.fillRect(0, 0, W, H);
@@ -678,8 +686,8 @@ const ArmModel = (() => {
     const m = new T.Mesh(g, nailM); m.userData.isNail = true; return m;
   }
 
-  function digit(parent, x, y, rz, r0, L, Jc, thumb) {
-    const g = new T.Group(); g.position.set(x, y, thumb ? .1 : .02); g.rotation.set(thumb ? -.35 : 0, 0, rz); parent.add(g);
+  function digit(parent, x, y, rz, r0, L, Jc, thumb, o) {
+    const g = new T.Group(); g.position.set(x, y, o ? o.z : (thumb ? .1 : .02)); g.rotation.set(thumb ? -.35 : 0, o && o.flip ? Math.PI : 0, rz); parent.add(g);
     const nd0 = Jc[Jc.length - 1] + .025, nd1 = L - .06;
     const prof = d => {
       let r = r0 * (1 - .22 * Math.max(0, d) / L) * (1 + .38 * G(d, -.02, .18));
@@ -749,60 +757,81 @@ const ArmModel = (() => {
     return out;
   }
 
-  return { build, setColor };
+
+  /* ---------- LEG + FOOT ---------- */
+  function profOf(KK) {
+    const f = (i, d) => {
+      let k = 0; while (k < KK.length - 2 && d > KK[k + 1][0]) k++;
+      const a = KK[k], b = KK[k + 1], h = b[0] - a[0], t = Math.min(1, Math.max(0, (d - a[0]) / h)), t2 = t * t, t3 = t2 * t;
+      const m = j => { const p = KK[Math.max(0, j - 1)], n = KK[Math.min(KK.length - 1, j + 1)]; return (n[i] - p[i]) / ((n[0] - p[0]) || 1); };
+      return (2*t3 - 3*t2 + 1) * a[i] + (t3 - 2*t2 + t) * h * m(k) + (-2*t3 + 3*t2) * b[i] + (t3 - t2) * h * m(k + 1);
+    };
+    return d => ({ rx: Math.max(0, f(1, d)), rz: Math.max(0, f(2, d)), zc: f(3, d) });
+  }
+  // Leg profile: [distance down from hip, half-width, half-depth, depth offset]
+  const LEG_K = [[-.7,.02,.02,0],[-.6,.45,.45,-.02],[-.35,.74,.7,-.03],[0,.82,.78,-.03],[1,.78,.75,-.02],[2.2,.7,.68,0],[3.3,.6,.6,.02],[4,.52,.52,.02],[4.5,.5,.5,0],[4.9,.5,.5,-.02],[5.6,.56,.58,-.07],[6,.55,.58,-.06],[7,.42,.42,-.02],[7.9,.33,.31,0],[8.3,.3,.28,0],[8.55,.26,.24,0]];
+  const legProf = profOf(LEG_K);
+  function legMod(d, th) {
+    const c = Math.cos(th), s = Math.sin(th), ant = P(s), post = P(-s); let f = 1;
+    f += .08 * G(d, 1.8, .9) * ant * ant;            // quadriceps
+    f += .06 * G(d, 1.9, .9) * post * post;          // hamstrings
+    f += .12 * G(d, 4.5, .22) * ant ** 3;            // kneecap
+    f -= .06 * G(d, 4.55, .2) * post * post;         // back of knee
+    f += .04 * G(d, 5.8, 1.4) * ant ** 8;            // shin crest
+    f += .1 * G(d, 5.5, .6) * post * post;           // calf muscle
+    f += .12 * G(d, 8.1, .2) * (P(c) ** 4 + P(-c) ** 4); // ankle bones
+    f += .1 * G(d, -.1, .3) * post;                  // hip / glute
+    return f;
+  }
+  // Foot profile along its length: [distance from heel, half-width, half-height, centre height]
+  const FOOT_K = [[0,.02,.02,.02],[.06,.2,.2,.2],[.2,.3,.34,.34],[.5,.33,.36,.36],[.9,.34,.37,.39],[1.3,.37,.28,.34],[1.7,.46,.18,.18],[1.95,.47,.14,.14],[2.08,.4,.1,.1],[2.15,0,0,.08]];
+  const footProf = profOf(FOOT_K);
+  const footMod = (d, th) => 1 + .06 * G(d, 1, .4) * P(Math.sin(th));
+
+  function finish(rig) {
+    rig.scale.setScalar(.45); rig.updateMatrixWorld(true);
+    const out = [];
+    rig.traverse(o => {
+      if (o.isSkinnedMesh) out.push(bake(o));
+      else if (o.userData.isNail) { const g = o.geometry.clone().applyMatrix4(o.matrixWorld); g.computeVertexNormals(); out.push(new T.Mesh(g, nailM)); }
+    });
+    out.forEach(m => { m.castShadow = true; m.receiveShadow = true; });
+    return out;
+  }
+
+  const LCFG = {
+    fullLeg: { d0: -.7, d1: 8.55, caps: { end: true } },
+    calf:    { d0: 4.2, d1: 8.55, caps: { start: true, end: true } },
+  };
+
+  function buildLeg(part, pz) {
+    ensure();
+    const cfg = LCFG[part], N = 240, rig = new T.Group();
+    const ds = Array.from({ length: N }, (_, i) => cfg.d0 + i / (N - 1) * (cfg.d1 - cfg.d0));
+    const leg = tube(ds, legProf, legMod, [4.5], .6, legM, 56, cfg.caps); rig.add(leg.mesh);
+
+    // Foot: lofted along its own length, then turned to point forward from the ankle
+    const fg = new T.Group(); fg.position.set(0, -4.4, -.6); fg.rotation.x = -Math.PI / 2; leg.bones[1].add(fg);
+    const fds = Array.from({ length: 100 }, (_, i) => i / 99 * 2.15);
+    fg.add(tube(fds, footProf, footMod, [100], .5, legM, 40).mesh);
+
+    const O = { z: .15, flip: true };
+    const toes = [
+      digit(fg, -.3,  -1.95, -.04, .15,  .62, [.32],      false, O),
+      digit(fg, -.12, -1.95, -.02, .1,   .62, [.22, .4],  false, O),
+      digit(fg, .05,  -1.95,  .02, .09,  .55, [.2, .37],  false, O),
+      digit(fg, .2,   -1.95,  .06, .085, .5,  [.18, .33], false, O),
+      digit(fg, .34,  -1.95,  .1,  .08,  .42, [.15, .28], false, O),
+    ];
+
+    leg.bones[1].rotation.x = (part === 'fullLeg' ? pz.knee : 0) * Math.PI / 180;
+    const k = pz.curl / 100;
+    toes.forEach((b, i) => { const f = i ? 1 : .7; b[1].rotation.x = -k * .9 * f; b[2].rotation.x = -k * 1.1 * f; if (b[3]) b[3].rotation.x = -k * .8; });
+    return finish(rig);
+  }
+
+  return { build, buildLeg, setColor };
 })();
-
-/**
- * Foot — shaped like a real foot, with toes.
- * Attaches to ankle at y=0.
- */
-function buildFoot({ flip = false } = {}) {
-  const group = new THREE.Group();
-
-  // Ankle
-  const ankleGeo = new THREE.CylinderGeometry(0.075, 0.09, 0.12, 24, 8, false);
-  const ankle = new THREE.Mesh(ankleGeo, skinMaterial);
-  ankle.position.y = -0.02;
-  ankle.castShadow = true;
-  group.add(ankle);
-
-  // Main foot body — elongated ellipsoid tapering forward
-  const footGeo = new THREE.SphereGeometry(1, 40, 28);
-  const foot = new THREE.Mesh(footGeo, skinMaterial);
-  foot.scale.set(0.13, 0.055, 0.22);
-  foot.position.set(0, -0.14, 0.06);
-  foot.castShadow = true;
-  group.add(foot);
-
-  // Heel bump
-  const heelGeo = new THREE.SphereGeometry(1, 24, 16);
-  const heel = new THREE.Mesh(heelGeo, skinMaterial);
-  heel.scale.set(0.09, 0.07, 0.09);
-  heel.position.set(0, -0.15, -0.08);
-  heel.castShadow = true;
-  group.add(heel);
-
-  // Toes — 5 small rounded shapes
-  const toeData = [
-    { x: -0.10, len: 0.045, r: 0.028, z: 0.24 },
-    { x: -0.05, len: 0.040, r: 0.025, z: 0.26 },
-    { x: 0.0,   len: 0.036, r: 0.023, z: 0.27 },
-    { x: 0.05,  len: 0.032, r: 0.021, z: 0.26 },
-    { x: 0.095, len: 0.028, r: 0.019, z: 0.245 },
-  ];
-  toeData.forEach(t => {
-    const tGeo = new THREE.SphereGeometry(t.r, 16, 12);
-    const tm = new THREE.Mesh(tGeo, skinMaterial);
-    tm.scale.z = t.len / t.r;
-    tm.position.set(t.x, -0.14, t.z);
-    tm.castShadow = true;
-    group.add(tm);
-  });
-
-  if (flip) group.rotation.y = Math.PI;
-
-  return group;
-}
 
 /* ============================================================
    BODY PART ASSEMBLY
@@ -820,58 +849,13 @@ function buildBodyPart(part, keepCam = false) {
     case 'fullArm':
     case 'upperArm':
     case 'forearmHand': {
-      ArmModel.build(part, pose).forEach(m => bodyGroup.add(m));
+      LimbModel.build(part, pose).forEach(m => bodyGroup.add(m));
       break;
     }
 
-    case 'fullLeg': {
-      const geo = buildLimb({
-        profile: [
-          { y: -2.55, r: 0.13, sx: 1.1, sz: 0.85 },  // ankle
-          { y: -2.35, r: 0.155, sx: 1.05, sz: 0.88 },
-          { y: -2.00, r: 0.22, sx: 1.0, sz: 0.92 },
-          { y: -1.65, r: 0.31, sx: 1.0, sz: 0.97 },  // calf peak
-          { y: -1.30, r: 0.33, sx: 1.0, sz: 1.0 },
-          { y: -1.00, r: 0.30, sx: 1.0, sz: 1.0 },
-          { y: -0.75, r: 0.26, sx: 1.0, sz: 1.0 },   // knee
-          { y: -0.55, r: 0.30, sx: 1.0, sz: 1.0 },
-          { y: -0.15, r: 0.38, sx: 1.0, sz: 1.0 },
-          { y:  0.25, r: 0.44, sx: 1.0, sz: 1.0 },   // thigh mid
-          { y:  0.65, r: 0.47, sx: 1.0, sz: 1.0 },
-          { y:  1.00, r: 0.48, sx: 1.0, sz: 1.0 },   // upper thigh
-          { y:  1.20, r: 0.45, sx: 1.0, sz: 1.0 },
-        ],
-        segments: 180,
-        radialSegments: 96,
-        centerY: -0.6,
-      });
-      limbMesh = new THREE.Mesh(geo, skinMaterial);
-      const foot = buildFoot();
-      foot.position.y = -1.95;
-      foot.scale.setScalar(1.05);
-      extras.push(foot);
-      break;
-    }
-
+    case 'fullLeg':
     case 'calf': {
-      const geo = buildLimb({
-        profile: [
-          { y: -1.15, r: 0.13, sx: 1.1, sz: 0.85 },
-          { y: -0.95, r: 0.16, sx: 1.05, sz: 0.9 },
-          { y: -0.60, r: 0.22, sx: 1.0, sz: 0.94 },
-          { y: -0.25, r: 0.30, sx: 1.0, sz: 0.97 },
-          { y:  0.10, r: 0.34, sx: 1.0, sz: 1.0 },
-          { y:  0.45, r: 0.33, sx: 1.0, sz: 1.0 },
-          { y:  0.75, r: 0.28, sx: 1.0, sz: 1.0 },
-          { y:  1.00, r: 0.25, sx: 1.0, sz: 1.0 },
-        ],
-        segments: 140,
-        radialSegments: 80,
-      });
-      limbMesh = new THREE.Mesh(geo, skinMaterial);
-      const foot = buildFoot();
-      foot.position.y = -1.12;
-      extras.push(foot);
+      LimbModel.buildLeg(part, pose).forEach(m => bodyGroup.add(m));
       break;
     }
 
@@ -895,10 +879,12 @@ function buildBodyPart(part, keepCam = false) {
     }
   }
 
-  // Pose controls only apply to the arm parts
-  const isArm = ARM_PARTS.includes(part);
-  document.getElementById('poseGroup').style.display = isArm ? 'block' : 'none';
+  // Pose controls apply to the arm and leg parts
+  const isArm = ARM_PARTS.includes(part), isLeg = LEG_PARTS.includes(part);
+  document.getElementById('poseGroup').style.display = (isArm || isLeg) ? 'block' : 'none';
   document.getElementById('elbowRow').style.display = part === 'fullArm' ? 'block' : 'none';
+  document.getElementById('kneeRow').style.display = part === 'fullLeg' ? 'block' : 'none';
+  document.getElementById('curlLabel').textContent = isLeg ? 'Toe curl' : 'Finger curl';
 
   if (limbMesh) {
     limbMesh.castShadow = true;
@@ -1035,10 +1021,12 @@ function wireUI() {
   $('poseElbow').addEventListener('change', rebuildPose);
   $('poseCurl').addEventListener('input', (e) => { pose.curl = +e.target.value; $('poseCurlVal').textContent = pose.curl + '%'; });
   $('poseCurl').addEventListener('change', rebuildPose);
+  $('poseKnee').addEventListener('input', (e) => { pose.knee = +e.target.value; $('poseKneeVal').textContent = pose.knee + '°'; });
+  $('poseKnee').addEventListener('change', rebuildPose);
 
   $('skinColor').addEventListener('input', (e) => {
     skinMaterial.color.set(e.target.value);
-    ArmModel.setColor(e.target.value);
+    LimbModel.setColor(e.target.value);
   });
 
   $('lightIntensity').addEventListener('input', (e) => {
